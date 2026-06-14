@@ -101,6 +101,59 @@ function resolveRepoPath(explicit) {
   return process.cwd();
 }
 
+// npm lifecycle scripts that execute arbitrary code on install/uninstall —
+// the exact vector a supply-chain worm uses to run a payload.
+const LIFECYCLE_HOOKS = [
+  'preinstall', 'install', 'postinstall',
+  'preuninstall', 'uninstall', 'postuninstall',
+  'prepare', 'prepublish', 'prepublishOnly', 'prepack', 'postpack',
+];
+const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+// A dependency value pointing somewhere other than the npm registry (git, url,
+// tarball, local path) — bypasses registry review, another classic vector.
+const NON_REGISTRY = /(:\/\/)|^git[+:]|^github:|^file:|^https?:|\.(tar|gz|tgz)$/i;
+
+async function readPackageJsonAtRef(repoPath, ref) {
+  try {
+    return JSON.parse(await git(['show', `${ref}:package.json`], repoPath));
+  } catch (_) {
+    return null;
+  }
+}
+
+// Compare the local package.json against the upstream one and flag changes that
+// could introduce malicious code on the next `npm install`: added/changed
+// lifecycle scripts, brand-new dependencies, or deps switched to a non-registry
+// source. Returns { risky, reasons }.
+async function inspectIncomingRisk(repoPath) {
+  const before = await readPackageJsonAtRef(repoPath, 'HEAD');
+  const after = await readPackageJsonAtRef(repoPath, '@{upstream}');
+  if (!before || !after) return { risky: false, reasons: [] };
+
+  const reasons = [];
+  const beforeScripts = before.scripts || {};
+  const afterScripts = after.scripts || {};
+  for (const hook of LIFECYCLE_HOOKS) {
+    if (afterScripts[hook] && afterScripts[hook] !== beforeScripts[hook]) {
+      reasons.push(`install hook ${beforeScripts[hook] ? 'changed' : 'added'}: "${hook}"`);
+    }
+  }
+
+  for (const field of DEP_FIELDS) {
+    const beforeDeps = before[field] || {};
+    const afterDeps = after[field] || {};
+    for (const name of Object.keys(afterDeps)) {
+      if (!(name in beforeDeps)) {
+        reasons.push(`new ${field}: ${name}`);
+      } else if (afterDeps[name] !== beforeDeps[name] && NON_REGISTRY.test(String(afterDeps[name]))) {
+        reasons.push(`${field} now from a non-registry source: ${name} (${afterDeps[name]})`);
+      }
+    }
+  }
+
+  return { risky: reasons.length > 0, reasons };
+}
+
 async function checkForUpdates(repoPath) {
   await git(['fetch', '--quiet'], repoPath);
   const branch = await git(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
@@ -115,7 +168,12 @@ async function checkForUpdates(repoPath) {
   }
   const countStr = await git(['rev-list', '--count', 'HEAD..@{upstream}'], repoPath);
   const behind = parseInt(countStr, 10) || 0;
-  return { available: behind > 0, behind, branch, upstream };
+  if (behind === 0) return { available: false, behind, branch, upstream };
+
+  // When risky, the renderer withholds one-click update and asks the user to
+  // review + update manually.
+  const { risky, reasons } = await inspectIncomingRisk(repoPath);
+  return { available: true, behind, branch, upstream, risky, reasons };
 }
 
 // Write the update script to a temp file and spawn it fully detached so it
@@ -180,6 +238,14 @@ function initGitUpdater(options = {}) {
   ipcMain.handle(IPC_CHECK, () => runCheck());
   ipcMain.handle(IPC_APPLY, async () => {
     try {
+      // Defense-in-depth: even if the renderer asks to apply, refuse to
+      // auto-run an update that changes install hooks or dependencies — the
+      // user must review and update manually.
+      const { risky, reasons } = await inspectIncomingRisk(repo);
+      if (risky) {
+        onError('update blocked: risky package.json changes', new Error(reasons.join('; ')));
+        return { started: false, blocked: true, reasons };
+      }
       spawnUpdate(repo);
       // Give the renderer a moment to show its "updating" state, then quit so
       // the detached script can repackage over out/.
@@ -205,4 +271,12 @@ function initGitUpdater(options = {}) {
   };
 }
 
-module.exports = { initGitUpdater, checkForUpdates, resolveRepoPath, IPC_CHECK, IPC_APPLY, EVT_STATUS };
+module.exports = {
+  initGitUpdater,
+  checkForUpdates,
+  inspectIncomingRisk,
+  resolveRepoPath,
+  IPC_CHECK,
+  IPC_APPLY,
+  EVT_STATUS,
+};

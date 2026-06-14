@@ -6,7 +6,12 @@ export interface BannerApi {
   onStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
-export type BannerMessageKey = 'available' | 'update' | 'updating' | 'upToDate';
+export type BannerMessageKey =
+  | 'available'
+  | 'availableManual'
+  | 'update'
+  | 'updating'
+  | 'upToDate';
 
 export interface BannerOptions {
   api?: BannerApi;

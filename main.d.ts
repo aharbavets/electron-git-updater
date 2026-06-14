@@ -7,6 +7,15 @@ export interface UpdateStatus {
   upstream?: string;
   reason?: string;
   error?: string;
+  /** True when the incoming update changes install hooks or dependencies. */
+  risky?: boolean;
+  /** Human-readable list of the risky changes detected. */
+  reasons?: string[];
+}
+
+export interface RiskReport {
+  risky: boolean;
+  reasons: string[];
 }
 
 export interface GitUpdaterOptions {
@@ -29,6 +38,7 @@ export interface GitUpdaterHandle {
 
 export function initGitUpdater(options?: GitUpdaterOptions): GitUpdaterHandle;
 export function checkForUpdates(repoPath: string): Promise<UpdateStatus>;
+export function inspectIncomingRisk(repoPath: string): Promise<RiskReport>;
 export function resolveRepoPath(explicit?: string | null): string;
 
 export const IPC_CHECK: string;

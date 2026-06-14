@@ -102,13 +102,33 @@ outlives the app it's about to repackage. It reopens the newest `out/*/*.app`.
 
 This is macOS-focused (`open`, `.app`). Windows/Linux relaunch is a TODO.
 
-## ⚠️ Security note
+## ⚠️ Supply-chain safety
 
 The update routine runs `npm ci`, and **npm install scripts execute arbitrary
-code**. A poisoned upstream commit would therefore run on every user's machine
-automatically, with no human reviewing the diff. Mitigations baked in / advised:
+code**. A poisoned upstream commit would otherwise run on every user's machine
+automatically, with no human reviewing the diff. Mitigations baked in:
 
+- **Risky updates are not auto-applied.** Before offering the one-click button,
+  the updater diffs the incoming `package.json` against the upstream one. If it
+  finds any of:
+    - an added or changed npm **lifecycle hook** (`preinstall`, `install`,
+      `postinstall`, `prepare`, `prepack`, …),
+    - a **brand-new dependency**, or
+    - a dependency switched to a **non-registry source** (git/url/tarball/file),
+
+  the banner switches to a **warning** that lists exactly what changed and asks
+  the user to **review and update manually** — no auto-update button is shown.
+  The main process also refuses `apply()` for a risky range (defense-in-depth),
+  so a forced call can't bypass it. This is exactly the case that would have
+  caught the `postinstall: curl … | sh` worm.
 - `npm ci` runs **only when `package.json`/`package-lock.json` changed** in the
   pulled range — most updates skip install entirely.
 - Commit and trust your `package-lock.json`; run `npm audit` regularly.
 - Restrict who can push to the branch users track.
+
+Programmatic access if you want your own gate:
+
+```ts
+import { inspectIncomingRisk } from 'electron-git-updater/main';
+const { risky, reasons } = await inspectIncomingRisk('/path/to/checkout');
+```
