@@ -10,7 +10,12 @@ It ships **no UI**. The main process reports a status object; your app draws wha
 npm i git+https://github.com/aharbavets/electron-git-updater.git#main
 ```
 
+Full setup instructions, including Vite/esbuild builds, every option, a verification checklist and troubleshooting, are in [docs/Integration-guide.md](docs/Integration-guide.md).
+The mechanics and the reasoning behind them are in [docs/How-it-works.md](docs/How-it-works.md).
+
 ## Wire it up
+
+The short version — four places in your app. The long version is the [integration guide](docs/Integration-guide.md).
 
 **Build config** — bake in the commit being built. This is what makes staleness detectable; see _Why the build commit matters_ below.
 
@@ -79,6 +84,8 @@ Comparing `HEAD` with the remote is the obvious approach and it is **wrong**. Pu
 
 So the comparison is _the commit the running binary was built from_ versus the newest available. The webpack plugin bakes the former in at build time. Without it the package falls back to `HEAD` and sets `knowsBuildCommit: false`.
 
+Vite, esbuild and no-bundler recipes: [integration guide, step 1](docs/Integration-guide.md#step-1--bake-the-build-commit-into-the-bundle).
+
 ## Why a Terminal window
 
 The update takes minutes and can fail — a dirty tree, a conflicting pull, a broken build. Run silently, that looks exactly like the app crashing on click. The Terminal shows each step, and on failure it **keeps the window open and does not reopen the app**, so the error isn't hidden behind a window popping up over it.
@@ -115,6 +122,11 @@ initGitUpdater({
   onError,
 });
 ```
+
+## Docs
+
+- [docs/Integration-guide.md](docs/Integration-guide.md) — wiring it into an app, step by step: build config, main, preload, UI, types, how to verify it, and what to do when it misbehaves
+- [docs/How-it-works.md](docs/How-it-works.md) — the check, the generated script, the supply-chain gate, and why several obvious-looking approaches don't work
 
 ## Requirements
 

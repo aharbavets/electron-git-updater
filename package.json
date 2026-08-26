@@ -40,7 +40,8 @@
     "renderer.d.ts",
     "scripts",
     "webpack.js",
-    "webpack.d.ts"
+    "webpack.d.ts",
+    "docs"
   ],
   "keywords": [
     "electron",
