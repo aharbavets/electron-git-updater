@@ -1,134 +1,125 @@
 # electron-git-updater
 
-A tiny, framework-agnostic, **drop-in** auto-updater for Electron apps that run
-**from a git checkout** (i.e. the user has the source and rebuilds locally,
-rather than receiving signed installer artifacts).
+Auto-update for Electron apps that are **run from their own source checkout** — the pattern where the app lives in a git repo, is packaged with `npm run package`, and is launched from `out/`. It notices when the running build is behind the source, and on request pulls, reinstalls, rebuilds and relaunches in a **visible Terminal window**.
 
-It does three things:
-
-1. Periodically runs `git fetch` and reports how many commits the local branch
-   is **behind its upstream** — the "update available" signal.
-2. Shows a small **localized banner** ("Доступно обновление" / "Update
-   available" / …) only when an update is available.
-3. On click, runs an `update-and-restart` routine: waits for the app to quit,
-   `git pull` → (conditionally) `npm ci` → `npm run package` → relaunch the
-   freshly built `.app`.
-
-> **Not** a replacement for `electron-updater`. If you ship **signed installer
-> artifacts** to third parties, use `electron-updater`/Squirrel instead. This is
-> for source-run / internal / personal apps where the machine already has the
-> dev toolchain and the git repo.
-
-## Why git-based?
-
-The standard Electron updaters (`electron-updater`, `update-electron-app`,
-Squirrel) all assume packaged, code-signed release artifacts on a feed. If your
-distribution model is literally "the user does `git pull && npm install && npm
-run package`", none of them apply — hence this package.
+It ships **no UI**. The main process reports a status object; your app draws whatever button, badge or banner suits it, because that part is different in every app.
 
 ## Install
 
-Add it as a git dependency (works with your SSH key):
-
-```jsonc
-// package.json
-"dependencies": {
-  "electron-git-updater": "https://github.com/aharbavets/electron-git-updater.git#main"
-}
+```bash
+npm i git+https://github.com/aharbavets/electron-git-updater.git#main
 ```
 
-For local development before the repo is pushed:
+## Wire it up
 
-```sh
-npm install /path/to/electron-git-updater
+**Build config** — bake in the commit being built. This is what makes staleness detectable; see _Why the build commit matters_ below.
+
+```js
+// webpack.main.config.js
+const { buildCommitDefinePlugin } = require("electron-git-updater/webpack");
+
+module.exports = { plugins: [buildCommitDefinePlugin()] };
 ```
 
-## Wire-up (three lines, three processes)
-
-**Main process** — after creating the window:
+**Main process**
 
 ```ts
-import { initGitUpdater } from 'electron-git-updater/main';
+import { initGitUpdater } from "electron-git-updater/main";
 
-const mainWindow = new BrowserWindow({ /* … */ });
-initGitUpdater({ window: mainWindow }); // repo path is auto-detected
+declare const BUILD_COMMIT: string; // injected by the plugin above
+
+initGitUpdater({ window: mainWindow, buildCommit: BUILD_COMMIT });
 ```
 
-**Preload**:
+**Preload**
 
 ```ts
-import { exposeGitUpdater } from 'electron-git-updater/preload';
-exposeGitUpdater(); // adds window.gitUpdater (does not touch window.electron)
+import { exposeGitUpdater } from "electron-git-updater/preload";
+
+exposeGitUpdater(); // window.gitUpdater
 ```
 
-**Renderer** — once, on app mount:
+**Renderer** — your UI, driven by the status object:
 
-```ts
-import { mountUpdateBanner } from 'electron-git-updater/renderer';
-mountUpdateBanner({ locale: 'ru' }); // or omit to follow navigator.language
+```tsx
+const [status, setStatus] = useState<UpdateStatus | null>(null)
+
+useEffect(() => window.gitUpdater?.onStatus(setStatus), [])
+
+<button
+    className={status?.available ? "btn btn-success" : "btn btn-outline-primary"}
+    onClick={() => window.gitUpdater?.apply()}
+>
+    {status?.available ? "Update available" : "Update"}
+</button>
+
+{status && !status.onMostRecentBranch && (
+    <span className="badge text-bg-danger">Not on a recently updated branch</span>
+)}
 ```
 
-That's it. The banner appears only when there are incoming commits.
+`apply()` opens a Terminal and quits the app; the script relaunches it.
+
+## The status object
+
+| Field                                     | Meaning                                                                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `available` / `behind`                    | whether, and how far, the running **build** is behind the newest available commit                                 |
+| `branch` / `upstream`                     | current branch (`""` when detached) and what it tracks                                                            |
+| `mostRecentBranch` / `onMostRecentBranch` | the most recently committed remote branch, and whether you're on it — catches "I'm on a stale feature branch"     |
+| `risky` / `reasons`                       | incoming commits change dependencies or install hooks                                                             |
+| `knowsBuildCommit`                        | false when no `buildCommit` was passed, so staleness was measured from `HEAD` and a stale build can't be detected |
+| `error`                                   | the check couldn't run — offline, no upstream, not a checkout                                                     |
+
+A failed check is ordinary. Leave the UI neutral rather than alarming anyone.
+
+## Why the build commit matters
+
+Comparing `HEAD` with the remote is the obvious approach and it is **wrong**. Pull the source without rebuilding and `HEAD` moves while the running app keeps the old code — so the app reports itself up to date while running stale, and the update button appears to do nothing.
+
+So the comparison is _the commit the running binary was built from_ versus the newest available. The webpack plugin bakes the former in at build time. Without it the package falls back to `HEAD` and sets `knowsBuildCommit: false`.
+
+## Why a Terminal window
+
+The update takes minutes and can fail — a dirty tree, a conflicting pull, a broken build. Run silently, that looks exactly like the app crashing on click. The Terminal shows each step, and on failure it **keeps the window open and does not reopen the app**, so the error isn't hidden behind a window popping up over it.
+
+macOS uses `open -a Terminal`, not `osascript`. Scripting Terminal sends an Apple Event, which macOS blocks unless the app ships `NSAppleEventsUsageDescription` _and_ the user has granted Automation permission — and when blocked, **nothing happens at all**: no window, no error. Launch Services has no such gate. Other platforms fall back to a detached background run.
+
+## Supply-chain gate
+
+`npm install` executes `preinstall` / `postinstall` scripts from every package, so a commit that adds a dependency is a commit that runs code on your machine. Anyone who can push to the remote can do that.
+
+The updater therefore inspects incoming commits for:
+
+- added or changed npm lifecycle hooks,
+- brand-new dependencies,
+- dependencies switched to a non-registry source (git, url, tarball, local path).
+
+**When any of those are found, the update does not run.** It is reported in `status.risky` / `status.reasons` so your UI can flag it, and `apply()` returns `{ started: false, blocked: true, reasons }` without touching anything. Finish by hand once you have read the diff:
+
+```bash
+git pull && npm install && npm run package
+```
+
+**This is not configurable, deliberately.** Carrying such a commit through unattended is the whole attack, so there is no option to switch the gate off and no default to get wrong. A setting like that only has to be wrong once.
 
 ## Options
 
-`initGitUpdater(options)`:
-
-| option        | default      | meaning                                            |
-|---------------|--------------|----------------------------------------------------|
-| `window`      | `null`       | window to push status events to                    |
-| `repoPath`    | auto-detect  | source checkout (walks up from the app to `.git`)  |
-| `intervalMs`  | `1_800_000`  | re-check cadence (30 min); `0` disables polling    |
-| `checkOnStart`| `true`       | run an initial check ~4s after launch              |
-| `onError`     | `console.error` | error sink                                      |
-
-`mountUpdateBanner(opts)`:
-
-| option     | default              | meaning                                  |
-|------------|----------------------|------------------------------------------|
-| `locale`   | `navigator.language` | which built-in translations to use       |
-| `messages` | `{}`                 | override any string explicitly           |
-| `api`      | `window.gitUpdater`  | the exposed bridge                       |
-
-Built-in locales: en, ru, be, uk, pl, de, es, fr (override any via `messages`).
-
-## How relaunch works (packaged build)
-
-When packaged, `app.getAppPath()` points inside
-`out/…/App.app/Contents/Resources/app.asar`; the package walks up that path
-until it finds the project's `.git`, so the running app knows which checkout to
-update. The update script is written to a temp file and run **detached**, so it
-outlives the app it's about to repackage. It reopens the newest `out/*/*.app`.
-
-This is macOS-focused (`open`, `.app`). Windows/Linux relaunch is a TODO.
-
-## ⚠️ Supply-chain safety
-
-The update routine runs `npm ci`, and **npm install scripts execute arbitrary
-code**. A poisoned upstream commit would otherwise run on every user's machine
-automatically, with no human reviewing the diff. Mitigations baked in:
-
-- **Risky updates are not auto-applied.** Before offering the one-click button,
-  the updater diffs the incoming `package.json` against the upstream one. If it
-  finds any of:
-    - an added or changed npm **lifecycle hook** (`preinstall`, `install`,
-      `postinstall`, `prepare`, `prepack`, …),
-    - a **brand-new dependency**, or
-    - a dependency switched to a **non-registry source** (git/url/tarball/file),
-
-  the banner switches to a **warning** that lists exactly what changed and asks
-  the user to **review and update manually** — no auto-update button is shown.
-  The main process also refuses `apply()` for a risky range (defense-in-depth),
-  so a forced call can't bypass it. This is exactly the case that would have
-  caught the `postinstall: curl … | sh` worm.
-- `npm ci` runs **only when `package.json`/`package-lock.json` changed** in the
-  pulled range — most updates skip install entirely.
-- Commit and trust your `package-lock.json`; run `npm audit` regularly.
-- Restrict who can push to the branch users track.
-
-Programmatic access if you want your own gate:
-
 ```ts
-import { inspectIncomingRisk } from 'electron-git-updater/main';
-const { risky, reasons } = await inspectIncomingRisk('/path/to/checkout');
+initGitUpdater({
+  window, // where to push status events
+  buildCommit, // from ./webpack — see above
+  repoPath, // default: walk up from the app bundle to the .git root
+  intervalMs: 15 * 60_000, // re-check interval; 0 disables
+  checkOnStart: true,
+  onError,
+});
 ```
+
+## Requirements
+
+macOS for the Terminal flow (other platforms update silently in the background). The app must be run from its git checkout with `npm run package` producing `out/*/*.app` — this is deliberately **not** an updater for distributed, signed, notarized apps. Use Squirrel or `electron-updater` for those.
+
+## Optional: the built-in banner
+
+`electron-git-updater/renderer` exports `mountUpdateBanner()`, a framework-agnostic drop-in banner, kept for convenience. Most apps should ignore it and render their own UI from the status object.

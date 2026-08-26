@@ -1,46 +1,64 @@
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow } from "electron"
 
+/** What the updater knows about the checkout, pushed to the renderer. */
 export interface UpdateStatus {
-  available: boolean;
-  behind: number;
-  branch?: string;
-  upstream?: string;
-  reason?: string;
-  error?: string;
-  /** True when the incoming update changes install hooks or dependencies. */
-  risky?: boolean;
-  /** Human-readable list of the risky changes detected. */
-  reasons?: string[];
+    /** True when the running build is behind the newest available commit. */
+    available: boolean
+    /** Commits between the build being run and the newest available one. */
+    behind: number
+    /** Current branch, or "" on a detached HEAD. */
+    branch?: string
+    /** Remote branch the current one tracks, e.g. "origin/main". */
+    upstream?: string
+    /** Remote branch with the newest commit. */
+    mostRecentBranch?: string
+    /** False when another branch has newer commits than the one checked out. */
+    onMostRecentBranch?: boolean
+    /** Commit this build was made from, when known. */
+    builtCommit?: string | null
+    /**
+     * False when no buildCommit was supplied, so staleness was measured from
+     * HEAD and a pulled-but-not-rebuilt app cannot be detected.
+     */
+    knowsBuildCommit?: boolean
+    /** True when incoming commits change dependencies or install hooks. */
+    risky?: boolean
+    /** Human-readable list of what makes it risky. */
+    reasons?: string[]
+    /** Set when the check could not run (offline, no upstream, not a checkout). */
+    error?: string
 }
 
-export interface RiskReport {
-  risky: boolean;
-  reasons: string[];
+export interface InitOptions {
+    /** Window to push status events to. */
+    window?: BrowserWindow | null
+    /** Commit this build was made from — see electron-git-updater/webpack. */
+    buildCommit?: string | null
+    /** Explicit source checkout path; auto-detected by default. */
+    repoPath?: string | null
+    /** Re-check interval in ms. Default 15 min; 0 disables. */
+    intervalMs?: number
+    /** Run a check shortly after launch. Default true. */
+    checkOnStart?: boolean
+    onError?: (message: string, error: unknown) => void
 }
 
-export interface GitUpdaterOptions {
-  /** Window to push status events to. */
-  window?: BrowserWindow | null;
-  /** Explicit source checkout path (auto-detected by default). */
-  repoPath?: string | null;
-  /** How often to re-check, in ms (default 1_800_000; 0 disables). */
-  intervalMs?: number;
-  /** Run an initial check shortly after launch (default true). */
-  checkOnStart?: boolean;
-  onError?: (message: string, error: unknown) => void;
+export interface Updater {
+    check(): Promise<UpdateStatus>
+    repoPath: string
+    stop(): void
 }
 
-export interface GitUpdaterHandle {
-  check(): Promise<UpdateStatus>;
-  stop(): void;
-  repoPath: string;
-}
+export declare function initGitUpdater(options?: InitOptions): Updater
+export declare function checkForUpdates(repoPath: string, buildCommit?: string): Promise<UpdateStatus>
+export declare function inspectIncomingRisk(repoPath: string): Promise<{ risky: boolean; reasons: string[] }>
+export declare function resolveRepoPath(explicit?: string | null): string
+export declare function buildUpdateScript(options: {
+    repoPath: string
+    parentPid: number | string
+    appName: string
+}): string
 
-export function initGitUpdater(options?: GitUpdaterOptions): GitUpdaterHandle;
-export function checkForUpdates(repoPath: string): Promise<UpdateStatus>;
-export function inspectIncomingRisk(repoPath: string): Promise<RiskReport>;
-export function resolveRepoPath(explicit?: string | null): string;
-
-export const IPC_CHECK: string;
-export const IPC_APPLY: string;
-export const EVT_STATUS: string;
+export declare const IPC_CHECK: string
+export declare const IPC_APPLY: string
+export declare const EVT_STATUS: string

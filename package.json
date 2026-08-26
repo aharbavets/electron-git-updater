@@ -1,16 +1,32 @@
 {
   "name": "electron-git-updater",
-  "version": "0.1.0",
-  "description": "Drop-in git-pull auto-updater for source-run Electron apps: detects incoming commits, shows a localized banner, then rebuilds and relaunches the packaged app.",
+  "version": "0.2.0",
+  "description": "Drop-in git-pull auto-updater for source-run Electron apps: detects when the running build is behind the source, then rebuilds and relaunches it in a visible Terminal. No UI \u2014 your app draws its own.",
   "license": "MIT",
   "author": "Alexander Harbavets",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
-    ".": { "types": "./index.d.ts", "default": "./index.js" },
-    "./main": { "types": "./main.d.ts", "default": "./main.js" },
-    "./preload": { "types": "./preload.d.ts", "default": "./preload.js" },
-    "./renderer": { "types": "./renderer.d.ts", "default": "./renderer.js" }
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./main": {
+      "types": "./main.d.ts",
+      "default": "./main.js"
+    },
+    "./preload": {
+      "types": "./preload.d.ts",
+      "default": "./preload.js"
+    },
+    "./renderer": {
+      "types": "./renderer.d.ts",
+      "default": "./renderer.js"
+    },
+    "./webpack": {
+      "types": "./webpack.d.ts",
+      "default": "./webpack.js"
+    }
   },
   "files": [
     "index.js",
@@ -22,9 +38,16 @@
     "main.d.ts",
     "preload.d.ts",
     "renderer.d.ts",
-    "scripts"
+    "scripts",
+    "webpack.js",
+    "webpack.d.ts"
   ],
-  "keywords": ["electron", "auto-update", "git", "updater"],
+  "keywords": [
+    "electron",
+    "auto-update",
+    "git",
+    "updater"
+  ],
   "peerDependencies": {
     "electron": ">=16"
   }
