@@ -17,7 +17,7 @@ It fits when all of these are true:
 
 - The app lives in a git repo on the machine that runs it, with a remote it can `git fetch` from.
 - It is built with `npm run package`, and the result lands in `out/<anything>/<Something>.app`.
-- It runs on macOS, or you accept a silent background update elsewhere (see [Platform support](#platform-support)).
+- It runs on macOS or Windows, which both show the update in a terminal window, or on Linux, where it runs in the background (see [Platform support](#platform-support)).
 - `git` is on `PATH`, and the remote authenticates without an interactive prompt — an SSH key or a cached credential helper.
 - The people running it can live with an update that takes as long as a full rebuild, in a Terminal window they can see.
 
@@ -375,17 +375,18 @@ You should get the dirty-tree warning and a prompt, not a cryptic failure.
 ## 5. Limits worth knowing up front
 
 **The generated script is not configurable.**
-It hard-codes `npm run package` and looks for the newest `out/*/*.app` to reopen.
+It hard-codes `npm run package`, and looks for the newest `out/*/*.app` on macOS, `out/*/*.exe` on Windows, or the newest executable under `out/*/` on Linux.
 A different build command or output layout means the build step fails or the reopen finds nothing — the pull still happens, and the Terminal window stays open saying so.
 `buildUpdateScript()` is exported if you want to read exactly what runs; it is not currently swappable at init time.
 
-<a id="platform-support"></a>**Platform support is macOS-first.**
-On macOS the update runs in a visible Terminal via Launch Services.
-Elsewhere it is spawned detached through `/bin/bash` with no output anywhere, which works on Linux but makes any failure invisible.
+<a id="platform-support"></a>**Platform support.**
+macOS runs the update in a visible Terminal via Launch Services.
+Windows runs it in its own console window through `cmd /c start`, using the bash that ships with Git for Windows — located from `GIT_INSTALL_ROOT`, from whichever `git` is on `PATH`, or in the usual install directories.
+Linux still runs detached in the background, so a failure there leaves no trace.
 
-On Windows there is usually no `/bin/bash` at all, and the failure mode is worse than an error message: `spawn` reports a missing executable on an asynchronous `error` event, which arrives after `apply()` has already resolved `{ started: true }` and scheduled the quit.
-The app shuts down, nothing updates, and the main process takes an unhandled error on the way out.
-Treat non-macOS as unfinished rather than supported, and gate the button on `process.platform === "darwin"` if your app ships there.
+**`/bin/bash` is not a path Windows has.** It exists only inside MSYS, so a native Windows process gets `ENOENT` from it even with Git Bash installed. An earlier version used it unconditionally off macOS, and the failure was invisible: `spawn` reports a missing executable on an asynchronous `error` event, which arrived after `apply()` had already resolved `{ started: true }` and scheduled the quit. The launch is now awaited through that event, so a shell that cannot start surfaces as `{ started: false, error }` — including the case where no bash is found at all, which says so and suggests the manual commands.
+
+⚠️ **The Windows path has been written and reasoned about, but not yet run on Windows.** It was developed and tested on macOS: the generated script is syntax-checked for every platform, the bash lookup and the launch-failure path are covered by tests, and the macOS behaviour is unchanged. Treat the first real Windows run as the verification that has not happened yet.
 
 **The app quits to update.**
 It has to: packaging writes over the bundle that is running.

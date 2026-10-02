@@ -57,7 +57,16 @@ export declare function buildUpdateScript(options: {
     repoPath: string
     parentPid: number | string
     appName: string
+    /** Platform to generate for. Defaults to the running one. */
+    platform?: NodeJS.Platform
 }): string
+
+/**
+ * Absolute path to a bash able to run the update script, or null when there is
+ * none. On Windows this is Git Bash — `/bin/bash` does not exist outside MSYS,
+ * so a native Windows process cannot use it.
+ */
+export declare function resolveBashPath(): string | null
 
 export declare const IPC_CHECK: string
 export declare const IPC_APPLY: string

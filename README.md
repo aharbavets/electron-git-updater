@@ -90,7 +90,9 @@ Vite, esbuild and no-bundler recipes: [integration guide, step 1](docs/Integrati
 
 The update takes minutes and can fail — a dirty tree, a conflicting pull, a broken build. Run silently, that looks exactly like the app crashing on click. The Terminal shows each step, and on failure it **keeps the window open and does not reopen the app**, so the error isn't hidden behind a window popping up over it.
 
-macOS uses `open -a Terminal`, not `osascript`. Scripting Terminal sends an Apple Event, which macOS blocks unless the app ships `NSAppleEventsUsageDescription` _and_ the user has granted Automation permission — and when blocked, **nothing happens at all**: no window, no error. Launch Services has no such gate. Other platforms fall back to a detached background run.
+macOS uses `open -a Terminal`, not `osascript`. Scripting Terminal sends an Apple Event, which macOS blocks unless the app ships `NSAppleEventsUsageDescription` _and_ the user has granted Automation permission — and when blocked, **nothing happens at all**: no window, no error. Launch Services has no such gate.
+
+Windows gets the same treatment through `cmd /c start`, which gives the script its own console window; the shell is the bash that ships with Git for Windows, since git is already required. `/bin/bash` is not used there — that path exists only inside MSYS, so a native Windows process gets `ENOENT` from it even when Git Bash is installed. Linux still runs detached in the background.
 
 ## Supply-chain gate
 
@@ -130,7 +132,11 @@ initGitUpdater({
 
 ## Requirements
 
-macOS for the Terminal flow (other platforms update silently in the background). The app must be run from its git checkout with `npm run package` producing `out/*/*.app` — this is deliberately **not** an updater for distributed, signed, notarized apps. Use Squirrel or `electron-updater` for those.
+`git` on `PATH`, and on Windows the bash that comes with Git for Windows.
+The app must be run from its git checkout with `npm run package` producing a build under `out/` — `out/*/*.app` on macOS, `out/*/*.exe` on Windows, the newest executable under `out/*/` on Linux.
+
+This is deliberately **not** an updater for distributed, signed, notarized apps.
+Use Squirrel or `electron-updater` for those.
 
 ## Optional: the built-in banner
 

@@ -111,6 +111,10 @@ When it is blocked, nothing happens at all: no window, no dialog, no error on st
 That is the actual root cause of the original "the Update button does nothing" bug, made worse by a `stdio: 'ignore'` that discarded the only evidence.
 `open -a Terminal <script>` goes through Launch Services instead, which has no such gate.
 
+On Windows the equivalent is `cmd /c start "" <bash> <script>`, which gives the script a console of its own.
+The shell is Git Bash rather than `/bin/bash`: that path lives inside MSYS and is not visible to a native Windows process, so using it is how the update used to fail without saying anything.
+`kill -0` is likewise unavailable there — MSYS process ids are its own, not Windows', so the wait step would see the app as already gone and let packaging race it. The Windows script asks `tasklist` instead.
+
 The launch is awaited, so a failure surfaces as `{ started: false, error }` instead of the app quitting into silence.
 
 ### Why the script lives in /tmp
@@ -129,12 +133,12 @@ Values are baked into the generated script rather than passed as arguments, beca
 ### What the script does
 
 ```
-wait for the app to quit (up to 30 s, polling kill -0)
+wait for the app to quit (up to 30 s, polling kill -0, or tasklist on Windows)
 check for local changes      → warn and ask before continuing
 git pull --ff-only
 check what the pull wants to install → abort if anything did
 npm run package
-reopen the newest out/*/*.app
+reopen the newest build under out/ (.app / .exe / executable)
 ```
 
 It runs `set -uo pipefail` but deliberately not `set -e`: each step is checked individually so the failing one can be named.
