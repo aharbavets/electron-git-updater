@@ -8,10 +8,14 @@ const DICT = {
   en: {
     available: 'Update available', update: 'Update', updating: 'Updating…', upToDate: 'Up to date',
     availableManual: 'Update available — it changes dependencies or install scripts. Review the changes and update manually.',
+    authFailed: 'Can’t reach the repository to check for updates.',
+    authFailedSsh: 'Can’t reach the repository over SSH to check for updates — switch the remote to HTTPS.',
   },
   ru: {
     available: 'Доступно обновление', update: 'Обновить', updating: 'Обновление…', upToDate: 'Актуальная версия',
     availableManual: 'Доступно обновление — оно меняет зависимости или install-скрипты. Проверьте изменения и обновите вручную.',
+    authFailed: 'Не удаётся связаться с репозиторием для проверки обновлений.',
+    authFailedSsh: 'Не удаётся связаться с репозиторием по SSH для проверки обновлений — переведите remote на HTTPS.',
   },
   be: {
     available: 'Даступнае абнаўленне', update: 'Абнавіць', updating: 'Абнаўленне…', upToDate: 'Актуальная версія',

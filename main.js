@@ -166,6 +166,18 @@ async function mostRecentlyUpdatedBranch(repoPath) {
   return ref ? ref.slice(REMOTES_PREFIX.length) : '';
 }
 
+// Fetch URL of the remote backing `upstream` (e.g. "origin/main" → origin), or
+// '' when it cannot be determined. Used to tailor the "can't reach the remote"
+// warning: suggesting HTTPS only makes sense for an SSH remote.
+async function remoteUrlFor(repoPath, upstream) {
+  const remote = (upstream || '').split('/')[0] || 'origin';
+  try {
+    return await git(['remote', 'get-url', remote], repoPath);
+  } catch (_) {
+    return '';
+  }
+}
+
 /**
  * Report whether the running build is behind the source.
  *
@@ -177,7 +189,18 @@ async function mostRecentlyUpdatedBranch(repoPath) {
  *   itself current while running stale.
  */
 async function checkForUpdates(repoPath, buildCommit) {
-  await git(['fetch', '--quiet'], repoPath);
+  // A failed fetch must not abort the check. The remote-tracking refs from the
+  // last successful fetch can already show the build is behind, and on a GUI app
+  // whose environment carries no git credentials (e.g. no ssh-agent on Windows)
+  // every fetch fails — reporting from local refs beats reporting nothing.
+  let fetchFailed = false;
+  let fetchError = '';
+  try {
+    await git(['fetch', '--quiet'], repoPath);
+  } catch (error) {
+    fetchFailed = true;
+    fetchError = String((error && error.stderr) || (error && error.message) || error).trim();
+  }
 
   const branchRaw = await git(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
   // "HEAD" here means a detached checkout, not a branch called HEAD
@@ -209,7 +232,17 @@ async function checkForUpdates(repoPath, buildCommit) {
     onMostRecentBranch,
     builtCommit: builtFrom === 'HEAD' ? null : buildCommit,
     knowsBuildCommit: builtFrom !== 'HEAD',
+    fetchFailed,
   };
+
+  if (fetchFailed) {
+    status.fetchError = fetchError;
+    // A credential/permission failure reaching the remote — the check can't see
+    // new commits. On a GUI app this is usually a missing ssh-agent.
+    status.fetchAuthFailed =
+      /permission denied|publickey|could not read from remote|authentication failed/i.test(fetchError);
+    status.remoteIsSsh = /^(git@|ssh:\/\/)/i.test(await remoteUrlFor(repoPath, upstream));
+  }
 
   if (behind > 0) Object.assign(status, await inspectIncomingRisk(repoPath));
   return status;

@@ -32,6 +32,7 @@ function mountUpdateBanner(opts = {}) {
   el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2000;display:none;';
   el.innerHTML =
     '<div data-egu-alert class="alert d-flex flex-column align-items-center mb-0 rounded-0 shadow-sm" role="alert" style="border-left:0;border-right:0;">' +
+    '<button type="button" class="btn-close position-absolute end-0 top-0 m-2" data-egu-close aria-label="Close"></button>' +
     '<div class="d-flex align-items-center justify-content-center gap-3">' +
     '<span data-egu-text></span>' +
     '<button type="button" class="btn btn-sm btn-primary" data-egu-btn></button>' +
@@ -44,6 +45,17 @@ function mountUpdateBanner(opts = {}) {
   const textEl = el.querySelector('[data-egu-text]');
   const reasonsEl = el.querySelector('[data-egu-reasons]');
   const btn = el.querySelector('[data-egu-btn]');
+  const closeBtn = el.querySelector('[data-egu-close]');
+
+  // Inline so it survives the className reassignments in render(); anchors the
+  // absolutely-positioned close button to the alert.
+  alertEl.style.position = 'relative';
+
+  // Just hide it. No "remember dismissed" logic on purpose: the next check
+  // re-renders, so a banner closed by accident before it was read comes back.
+  closeBtn.addEventListener('click', () => {
+    el.style.display = 'none';
+  });
 
   function setReasons(reasons) {
     reasonsEl.innerHTML = '';
@@ -61,6 +73,18 @@ function mountUpdateBanner(opts = {}) {
 
   // Render from a status object pushed by the main process.
   function render(status) {
+    // Could not reach the remote to check for updates (e.g. a GUI app whose
+    // environment has no git credentials). Warn without an update button — the
+    // update would need the same access — and point an SSH remote at HTTPS.
+    if (status && status.fetchAuthFailed) {
+      alertEl.className =
+        'alert alert-warning d-flex flex-column align-items-center mb-0 rounded-0 shadow-sm';
+      textEl.textContent = status.remoteIsSsh ? t('authFailedSsh') : t('authFailed');
+      btn.style.display = 'none';
+      setReasons(status.fetchError ? [status.fetchError] : null);
+      el.style.display = 'block';
+      return;
+    }
     if (!status || !status.available) {
       el.style.display = 'none';
       return;

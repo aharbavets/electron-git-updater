@@ -200,7 +200,18 @@ The states worth handling:
 | `risky: true`               | a warning that the update is withheld, with `reasons`    |
 | `onMostRecentBranch: false` | "you are on a stale branch", naming `mostRecentBranch`   |
 | `knowsBuildCommit: false`   | optional: detection is degraded, staleness may be missed |
+| `fetchAuthFailed: true`     | can't reach the remote (no credentials); for an SSH remote (`remoteIsSsh: true`), suggest switching it to HTTPS |
 | `error`                     | usually nothing — a failed check is ordinary             |
+
+A failed `git fetch` no longer aborts the check: the check continues from the
+last-fetched remote-tracking refs and sets `fetchFailed` (with `fetchError`, and
+`fetchAuthFailed`/`remoteIsSsh` when it looks like a credentials problem).
+This matters for a packaged GUI app, whose process environment often has no git
+credentials — on Windows, typically no running `ssh-agent` — so every live fetch
+fails even though the local refs already know the build is behind. The built-in
+`mountUpdateBanner` shows a warning in that case; a custom UI should react to
+`fetchAuthFailed`. The practical fix for the user is an HTTPS remote (a
+credential manager serves those to GUI processes without an agent).
 
 React, close to a real integration:
 
@@ -369,6 +380,7 @@ You should get the dirty-tree warning and a prompt, not a cryptic failure.
 | Red "not on a recently updated branch" that never clears        | another remote branch has newer commits than the one you track | switch branch, or ignore it — it is information, not an error                              |
 | `status.error` mentioning `no upstream`                         | the current branch tracks nothing                              | `git branch -u origin/<branch>`                                                            |
 | The check fails instead of hanging on a credential prompt       | intentional — `GIT_TERMINAL_PROMPT=0` is set                   | give the remote an SSH key or a credential helper                                          |
+| Banner says "can't reach the repository over SSH" (`fetchAuthFailed`) | the packaged app's environment has no git credentials — on Windows usually no `ssh-agent` for an SSH remote | switch the remote to HTTPS (`git remote set-url origin https://…`); a credential manager then serves it without an agent |
 | Terminal opens, then "cancelled — commit or stash your changes" | dirty working tree, and you declined the prompt                | commit or stash first                                                                      |
 | Terminal says "No built app found under out/"                   | `npm run package` did not produce `out/*/*.app`                | see the layout assumption below                                                            |
 

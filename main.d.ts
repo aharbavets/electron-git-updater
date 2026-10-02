@@ -27,6 +27,23 @@ export interface UpdateStatus {
     reasons?: string[]
     /** Set when the check could not run (offline, no upstream, not a checkout). */
     error?: string
+    /**
+     * True when `git fetch` failed; the report then comes from the last-fetched
+     * remote-tracking refs rather than aborting.
+     */
+    fetchFailed?: boolean
+    /** The fetch error output, when `fetchFailed`. */
+    fetchError?: string
+    /**
+     * True when the fetch failed for a credentials/permission reason — e.g. a
+     * GUI app whose environment has no ssh-agent.
+     */
+    fetchAuthFailed?: boolean
+    /**
+     * True when the tracked remote uses SSH. Switching it to HTTPS is the usual
+     * fix for `fetchAuthFailed` on a GUI app.
+     */
+    remoteIsSsh?: boolean
 }
 
 export interface InitOptions {
