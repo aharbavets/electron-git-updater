@@ -351,13 +351,13 @@ if [ "$PARENT_PID" != "0" ]; then
   echo "Done."
 fi
 
-# A dirty tree is the most common reason this fails: git pull refuses rather
+# A dirty tree is the most common reason this fails: the merge refuses rather
 # than clobbering local edits. Say so up front instead of failing cryptically.
 step "Checking for local changes"
 if [ -n "$(git status --porcelain)" ]; then
   git status --short
   echo
-  echo "⚠️  You have uncommitted changes; git pull will fail if any conflict."
+  echo "⚠️  You have uncommitted changes; the update will fail if any conflict."
   confirm "Continue anyway?" || die "cancelled — commit or stash your changes first"
 else
   echo "Working tree is clean."
@@ -366,7 +366,25 @@ fi
 BEFORE="$(git rev-parse HEAD)"
 
 step "Pulling the latest source"
-git pull --ff-only || die "git pull"
+# Deliberately not "git pull".
+#
+# git pull decides what to merge by reading .git/FETCH_HEAD, a scratch file
+# that git rewrites on every fetch and does NOT lock between processes. A
+# checkout shared with an IDE, another agent, or a second copy of this script
+# can have two fetches land in that file at once; the same branch is then
+# listed twice and every later pull dies with "Cannot fast-forward to multiple
+# branches" — a fault in a temporary file that reads as a fault in the
+# repository, and that no amount of inspecting git config explains.
+#
+# --ff-only does not help: it constrains the result of the merge, while the
+# damage is in the input. Fetching and then merging the branch's configured
+# upstream never opens FETCH_HEAD at all.
+UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+if [ -z "$UPSTREAM" ]; then
+  die "this branch has no upstream; set one with: git branch --set-upstream-to=origin/$(git rev-parse --abbrev-ref HEAD)"
+fi
+git fetch || die "git fetch"
+git merge --ff-only "$UPSTREAM" || die "git merge --ff-only $UPSTREAM"
 
 # Never install dependencies that arrived with this pull. npm install runs
 # preinstall/postinstall scripts from every package, on this machine, with
