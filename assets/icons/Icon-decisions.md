@@ -3,15 +3,17 @@
 The installed icon is `.repoicon.svg` in the repository root.
 Everything in this folder is the design source it came from, kept so that changing a shade or reverting is a copy rather than a redesign.
 
-## Chosen: `b-ccw10-ry68.svg`
+## Chosen: `b-ccw10-ry68-scale15.svg`
 
 An atom whose orbit is the update arrow.
 A tilted elliptical orbit (`rx 9`, `ry 6.8`, rotated −30°) broken by a 54° gap at the lower left, its free end carrying a chevron arrowhead aimed along the curve's own tangent and then turned 10° anticlockwise from it.
 A nucleus at the centre and three electrons drawn as beads, each with a tile-coloured halo so the orbit reads as passing behind them rather than through them.
 
 ```bash
-cp assets/icons/b-ccw10-ry68.svg .repoicon.svg
+cp assets/icons/b-ccw10-ry68-scale15.svg .repoicon.svg
 ```
+
+`b-ccw10-ry68.svg` is the same drawing at the original 76% fill, kept for reference.
 
 ## Runner-up, kept deliberately: `reload-e3-big.svg`
 
@@ -42,7 +44,22 @@ The colour was chosen by measurement rather than by eye, against **two** backgro
 The dark list is what ruled out every richer candidate — they all look best on white and vanish on JetBrains' dark welcome screen.
 `#DB2777` was also chosen to stand apart from the blues and greens already in use nearby: in a list the colour does more to tell projects apart than the drawing does.
 
-**The artwork fills 76% of the tile**, fitted by measuring the ink's alpha bounding box and iterating, because the stroke scales with the glyph and throws off a single-pass measurement.
+**The artwork fills 87.4% of the tile** — the original fit was 76%, raised by 15%.
+It is fitted by measuring the ink's alpha bounding box and iterating, because the stroke scales with the glyph and a single-pass measurement is thrown off by it.
+
+⚠️ **The limit on that scale is the corner radius, not the tile's edge.**
+The radius is 230px on a 1024 canvas, so artwork that comes within roughly that distance of a corner starts to crowd the curve even though it is nowhere near the straight edges — and this icon's orbit is tilted, which puts its extremes towards the corners.
+
+| fill | margin to the edge |
+| --- | --- |
+| 76% (original) | 123 px |
+| **87.4% (chosen)** | **64 px** |
+| 91.2% | 45 px |
+| 95.0% | 25 px |
+| 98.8% | 6 px |
+
+Past about 91% the orbit visibly argues with the rounded corner; at 98.8% the ink effectively touches the edge, so any later change to the drawing would push it outside.
+None of this is visible at 16px — the whole ladder looks identical there, so the gain from enlarging is at the large sizes only. See `contact-sheet-scale.png`.
 
 ## What was tried and rejected, with the reason
 
