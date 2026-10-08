@@ -52,6 +52,27 @@ Every git call runs with `GIT_TERMINAL_PROMPT=0` and a 60-second timeout.
 Without that, a remote wanting credentials blocks on a prompt in a process with no terminal attached, and the check hangs forever instead of failing.
 Failing is much better: a failure is reported and the UI stays neutral, while a hang looks like the app has frozen.
 
+### Checking the updater against itself
+
+The gate below means a fix released in this library does not arrive by updating the host app: the source is pulled and rebuilt, and `node_modules/electron-git-updater` is whatever it was.
+
+Nothing looks wrong when that happens, which is what makes it worth a check.
+A new tag does not change the host's `package.json` — the declared `#semver:` range already covers it — so the "what does the pull want to install" step is right to report no change, and the installed copy is behind all the same.
+Measured 2026-10-08: a host app ran `1.0.0` for a day after `1.0.1` was tagged, failing on the exact bug `1.0.1` fixes, with every rebuild succeeding.
+
+So after the ordinary check succeeds, `checkUpdaterVersion()` reads the newest `vX.Y.Z` tag from this library's own remote with `git ls-remote --tags` and compares it, numerically, against the installed version.
+The result rides along as `status.updater`.
+
+Three details decide whether it is useful rather than annoying:
+
+- **It never rejects.** An unreachable remote, a repository with no tags, or no URL to try comes back as `error`. A courtesy check must not take the real one down.
+- **It is skipped when the fetch failed**, because the network or the credentials are already the problem and a second remote call would only fail again.
+- **It tries several addresses.** The host's declared dependency spec first, since that is the authority on where this copy came from; then — for a private package declared over HTTPS, where `git ls-remote` has no credentials in a GUI app's environment and fails outright — the same GitHub URL in SSH form; then this package's own `repository` field.
+
+🚨 When it does report `outdated`, the advice matters as much as the warning.
+`npm install` will **not** move a git dependency: `package-lock.json` pins the resolved commit and install honours the lock, so it reinstalls the same version and reports success.
+The generated script therefore prints `npm update`, followed by the one-liner that reads back what actually landed.
+
 ### Why the build commit, and not HEAD
 
 Comparing `HEAD` against the remote is the obvious design.
@@ -135,14 +156,20 @@ Values are baked into the generated script rather than passed as arguments, beca
 ```
 wait for the app to quit (up to 30 s, polling kill -0, or tasklist on Windows)
 check for local changes      → warn and ask before continuing
-git pull --ff-only
+git fetch, then git merge --ff-only @{u}
 check what the pull wants to install → abort if anything did
+                             → and say so if the updater itself is behind
 npm run package
 reopen the newest build under out/ (.app / .exe / executable)
 ```
 
 It runs `set -uo pipefail` but deliberately not `set -e`: each step is checked individually so the failing one can be named.
 "git pull failed" is a message someone can act on; a bare non-zero exit is not.
+
+⚠️ **Not `git pull`.** It decides what to merge by reading `.git/FETCH_HEAD`, a scratch file git rewrites on every fetch and does not lock between processes.
+A checkout shared with an IDE, a coding agent, or a second copy of this script can have two fetches land in that file at once; the same branch is then listed twice and every later pull dies with `fatal: Cannot fast-forward to multiple branches`.
+`--ff-only` does not help, because it constrains the result of the merge while the damage is in the input.
+Merging the branch's configured upstream directly never opens FETCH_HEAD at all.
 
 The dirty-tree check is first among the real steps because it is the most common failure by far.
 `git pull` refuses rather than clobbering local edits, and saying so up front is better than a cryptic failure three steps in.

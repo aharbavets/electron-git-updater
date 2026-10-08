@@ -222,14 +222,33 @@ function gitUrlFromSpec(spec) {
 }
 
 /**
- * Where this copy was installed from.
+ * The SSH equivalent of an HTTPS GitHub URL, or null.
  *
- * Read from the host app's package.json first, because that is the authority
- * on where it actually came from — a fork installed from another remote must
- * be compared against *that* remote, not against the one this package was
- * published from. The `repository` field is the fallback.
+ * 🚨 This is what makes the check work at all for a private package. An npm
+ * dependency is commonly declared over HTTPS, and `git ls-remote` against a
+ * private repository over HTTPS has no credentials in a GUI app's environment:
+ * it asks for a username, and with GIT_TERMINAL_PROMPT=0 simply fails. The
+ * same repository over SSH goes through the agent and answers.
  */
-function updaterRemoteUrl(repoPath) {
+function sshEquivalentOf(url) {
+  const match = /^https?:\/\/github\.com\/(.+?)(\.git)?$/.exec(String(url || ''));
+  return match ? `git@github.com:${match[1]}.git` : null;
+}
+
+/**
+ * Every address worth trying for this package's own remote, best first.
+ *
+ * The host app's declared spec comes first because it is the authority on
+ * where this copy actually came from — a fork installed from another remote
+ * must be compared against *that* remote. The SSH rewrite follows for the
+ * private-over-HTTPS case, and this package's own `repository` field last.
+ */
+function candidateRemoteUrls(repoPath) {
+  const candidates = [];
+  const add = (url) => {
+    if (url && !candidates.includes(url)) candidates.push(url);
+  };
+
   try {
     const hostManifest = JSON.parse(
       fs.readFileSync(path.join(repoPath, 'package.json'), 'utf8')
@@ -238,13 +257,17 @@ function updaterRemoteUrl(repoPath) {
       (hostManifest.dependencies && hostManifest.dependencies[PACKAGE_NAME]) ||
       (hostManifest.devDependencies && hostManifest.devDependencies[PACKAGE_NAME]);
     const fromHost = gitUrlFromSpec(spec);
-    if (fromHost) return fromHost;
+    add(fromHost);
+    add(sshEquivalentOf(fromHost));
   } catch (_) {
-    /* no host manifest, or not JSON — fall through */
+    /* no host manifest, or not JSON — fall through to our own */
   }
+
   const own = require('./package.json').repository;
-  const url = typeof own === 'string' ? own : own && own.url;
-  return gitUrlFromSpec(url) || null;
+  const ownUrl = gitUrlFromSpec(typeof own === 'string' ? own : own && own.url);
+  add(ownUrl);
+  add(sshEquivalentOf(ownUrl));
+  return candidates;
 }
 
 /** The newest `vX.Y.Z` tag on a remote, or null when none can be read. */
@@ -270,22 +293,30 @@ async function newestPublishedVersion(url) {
  */
 async function checkUpdaterVersion(repoPath) {
   const result = { installed: INSTALLED_VERSION, latest: null, outdated: false };
-  try {
-    const url = updaterRemoteUrl(repoPath);
-    if (!url) {
-      result.error = 'no git remote known for ' + PACKAGE_NAME;
-      return result;
-    }
-    const latest = await newestPublishedVersion(url);
-    if (!latest) {
-      result.error = 'no version tags on ' + url;
-      return result;
-    }
-    result.latest = latest;
-    result.outdated = compareVersions(latest, INSTALLED_VERSION) > 0;
-  } catch (error) {
-    result.error = String((error && error.stderr) || (error && error.message) || error).trim();
+  const candidates = candidateRemoteUrls(repoPath);
+  if (candidates.length === 0) {
+    result.error = `no git remote known for ${PACKAGE_NAME}`;
+    return result;
   }
+
+  let lastError = '';
+  for (const url of candidates) {
+    try {
+      const latest = await newestPublishedVersion(url);
+      if (!latest) {
+        lastError = `no version tags on ${url}`;
+        continue;
+      }
+      result.latest = latest;
+      result.outdated = compareVersions(latest, INSTALLED_VERSION) > 0;
+      return result;
+    } catch (error) {
+      lastError = String(
+        (error && error.stderr) || (error && error.message) || error
+      ).trim();
+    }
+  }
+  result.error = lastError;
   return result;
 }
 
@@ -435,6 +466,13 @@ PARENT_PID=${shellQuote(String(parentPid))}
 UPDATER_NAME=${shellQuote(PACKAGE_NAME)}
 UPDATER_INSTALLED=${shellQuote(updater && updater.outdated ? String(updater.installed) : '')}
 UPDATER_LATEST=${shellQuote(updater && updater.outdated ? String(updater.latest) : '')}
+# Pre-quoted in JavaScript rather than assembled in the script: the command
+# contains both kinds of quote, and nesting them inside an echo is what stops
+# the generated script parsing — which breaks every update, not just this
+# message, because bash parses the whole file before running any of it.
+UPDATER_VERIFY=${shellQuote(
+  `node -p "require('./node_modules/${PACKAGE_NAME}/package.json').version"`
+)}
 
 cd "$REPO" || { echo "Cannot enter $REPO"; read -r -p "Press Enter to close… " _; exit 1; }
 
@@ -527,7 +565,7 @@ if git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json 2>/dev/null
     echo "    changes nothing. Afterwards, check what landed:"
     echo
     echo "        cd '$REPO' && npm update $UPDATER_NAME && npm run package"
-    echo "        node -p \"require('./node_modules/$UPDATER_NAME/package.json').version\""
+    echo "        $UPDATER_VERIFY"
     echo
   fi
 else

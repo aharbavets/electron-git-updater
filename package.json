@@ -1,7 +1,11 @@
 {
   "name": "electron-git-updater",
   "version": "1.0.1",
-  "description": "Drop-in git-pull auto-updater for source-run Electron apps: detects when the running build is behind the source, then rebuilds and relaunches it in a visible Terminal. No UI \u2014 your app draws its own.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aharbavets/electron-git-updater.git"
+  },
+  "description": "Drop-in git-pull auto-updater for source-run Electron apps: detects when the running build is behind the source, then rebuilds and relaunches it in a visible Terminal. No UI — your app draws its own.",
   "license": "MIT",
   "author": "Alexander Harbavets",
   "main": "index.js",

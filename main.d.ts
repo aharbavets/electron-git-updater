@@ -44,6 +44,23 @@ export interface UpdateStatus {
      * fix for `fetchAuthFailed` on a GUI app.
      */
     remoteIsSsh?: boolean
+    /**
+     * Whether the updater library itself is behind its newest released tag.
+     * Absent when the fetch failed, since the check is skipped then.
+     */
+    updater?: UpdaterVersion
+}
+
+/** How the installed copy of this library compares with its newest tag. */
+export interface UpdaterVersion {
+    /** Version of this library as installed in the host app. */
+    installed: string
+    /** Newest `vX.Y.Z` tag on its remote, or null when none could be read. */
+    latest: string | null
+    /** True when a newer tag exists than the installed version. */
+    outdated: boolean
+    /** Why the check could not answer — unreachable remote, no tags, no URL. */
+    error?: string
 }
 
 export interface InitOptions {
@@ -68,12 +85,27 @@ export interface Updater {
 
 export declare function initGitUpdater(options?: InitOptions): Updater
 export declare function checkForUpdates(repoPath: string, buildCommit?: string): Promise<UpdateStatus>
+/**
+ * Whether the installed copy of this library is behind its newest released tag.
+ *
+ * This library is usually the host app's only git dependency, and such a
+ * dependency goes stale silently: a new tag does not change `package.json`, so
+ * nothing reports it. Never rejects — an unreachable remote comes back as
+ * `error`.
+ */
+export declare function checkUpdaterVersion(repoPath: string): Promise<UpdaterVersion>
+
 export declare function inspectIncomingRisk(repoPath: string): Promise<{ risky: boolean; reasons: string[] }>
 export declare function resolveRepoPath(explicit?: string | null): string
 export declare function buildUpdateScript(options: {
     repoPath: string
     parentPid: number | string
     appName: string
+    /**
+     * Result of `checkUpdaterVersion`. When it says the library is behind, the
+     * generated script says so and gives the command that actually moves it.
+     */
+    updater?: UpdaterVersion
     /** Platform to generate for. Defaults to the running one. */
     platform?: NodeJS.Platform
 }): string

@@ -75,6 +75,7 @@ useEffect(() => window.gitUpdater?.onStatus(setStatus), [])
 | `risky` / `reasons`                       | incoming commits change dependencies or install hooks                                                             |
 | `knowsBuildCommit`                        | false when no `buildCommit` was passed, so staleness was measured from `HEAD` and a stale build can't be detected |
 | `error`                                   | the check couldn't run — offline, no upstream, not a checkout                                                     |
+| `updater`                                 | whether this library itself is behind its newest tag — see below. Absent when the fetch failed                   |
 
 A failed check is ordinary. Leave the UI neutral rather than alarming anyone.
 
@@ -111,6 +112,31 @@ git pull && npm install && npm run package
 ```
 
 **This is not configurable, deliberately.** Carrying such a commit through unattended is the whole attack, so there is no option to switch the gate off and no default to get wrong. A setting like that only has to be wrong once.
+
+## The updater can go stale without saying so
+
+The gate above means a released fix **does not arrive by updating the host app**. The source is pulled, the app is rebuilt, and the copy of this library under `node_modules/` is whatever it was.
+
+That is easy to miss, because nothing looks wrong. A new tag does not change the host's `package.json` — the declared `#semver:` range already covers it — so the update script correctly reports "no dependency or script changes" while the installed copy stays behind. Measured 2026-10-08: a host app ran `1.0.0` for a day after `1.0.1` was tagged, failing on the exact bug `1.0.1` fixes, with every rebuild succeeding.
+
+So the check also looks at this library's own remote and reports `status.updater`:
+
+```js
+{ installed: "1.0.0", latest: "1.0.1", outdated: true }
+```
+
+It never rejects. An unreachable remote, a repository with no tags, or no URL to try comes back as `error` and `latest: null` — this is a courtesy running beside the real check, and it must not take that check down. It is skipped entirely when the `git fetch` failed, since the network or the credentials are already the problem.
+
+🚨 **`npm install` does not fix a stale git dependency.** `package-lock.json` pins the resolved commit and install honours the lock, so it reinstalls the same version and reports success. Only `npm update` re-resolves the range:
+
+```bash
+npm update electron-git-updater
+node -p "require('./node_modules/electron-git-updater/package.json').version"
+```
+
+The second line is not optional — the first reports success either way. When `outdated` is true the generated update script prints both, so the person in front of the Terminal is told rather than left to notice.
+
+⚠️ **The remote is tried at more than one address.** The host's declared dependency spec comes first, since that is the authority on where this copy came from. For a **private** package declared over HTTPS, `git ls-remote` has no credentials in a GUI app's environment and fails outright, so the HTTPS GitHub URL is also tried in its SSH form, and this package's own `repository` field last.
 
 ## Options
 
