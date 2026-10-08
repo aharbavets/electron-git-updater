@@ -1,6 +1,6 @@
 {
   "name": "electron-git-updater",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aharbavets/electron-git-updater.git"
