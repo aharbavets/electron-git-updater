@@ -178,6 +178,117 @@ async function remoteUrlFor(repoPath, upstream) {
   }
 }
 
+// --- Is the updater itself out of date? --------------------------------------
+//
+// This library is almost always the host app's only git dependency, and a git
+// dependency with a `#semver:` range goes stale without anything saying so:
+// `package.json` does not change when a new tag appears, so the update script
+// correctly reports "no dependency changes" while the installed copy stays
+// behind. Measured 2026-10-08: a host app ran 1.0.0 for a day after 1.0.1 was
+// tagged, failing on the exact bug 1.0.1 fixed, with every rebuild succeeding.
+//
+// 🚨 And `npm install` does not fix it. package-lock.json pins the resolved
+// commit, and install honours the lock — so it reinstalls the same version and
+// reports success. Only `npm update <name>` re-resolves the range.
+
+const PACKAGE_NAME = require('./package.json').name;
+const INSTALLED_VERSION = require('./package.json').version;
+
+/** Compare dotted numeric versions; > 0 when `a` is newer than `b`. */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * The git URL out of an npm dependency spec such as
+ * `git+ssh://git@github.com/owner/repo.git#semver:^1.0.0`.
+ * Returns null for anything that is not a git spec — a registry version, say.
+ */
+function gitUrlFromSpec(spec) {
+  if (typeof spec !== 'string') return null;
+  const withoutFragment = spec.split('#')[0];
+  if (/^git\+/.test(withoutFragment)) return withoutFragment.replace(/^git\+/, '');
+  if (/^(git:|ssh:|https?:).*\.git$/.test(withoutFragment)) return withoutFragment;
+  if (/^github:/.test(withoutFragment)) {
+    return `https://github.com/${withoutFragment.replace(/^github:/, '')}.git`;
+  }
+  return null;
+}
+
+/**
+ * Where this copy was installed from.
+ *
+ * Read from the host app's package.json first, because that is the authority
+ * on where it actually came from — a fork installed from another remote must
+ * be compared against *that* remote, not against the one this package was
+ * published from. The `repository` field is the fallback.
+ */
+function updaterRemoteUrl(repoPath) {
+  try {
+    const hostManifest = JSON.parse(
+      fs.readFileSync(path.join(repoPath, 'package.json'), 'utf8')
+    );
+    const spec =
+      (hostManifest.dependencies && hostManifest.dependencies[PACKAGE_NAME]) ||
+      (hostManifest.devDependencies && hostManifest.devDependencies[PACKAGE_NAME]);
+    const fromHost = gitUrlFromSpec(spec);
+    if (fromHost) return fromHost;
+  } catch (_) {
+    /* no host manifest, or not JSON — fall through */
+  }
+  const own = require('./package.json').repository;
+  const url = typeof own === 'string' ? own : own && own.url;
+  return gitUrlFromSpec(url) || null;
+}
+
+/** The newest `vX.Y.Z` tag on a remote, or null when none can be read. */
+async function newestPublishedVersion(url) {
+  const out = await git(['ls-remote', '--tags', '--refs', url]);
+  let newest = null;
+  for (const line of out.split('\n')) {
+    const match = /refs\/tags\/v?(\d+\.\d+\.\d+)$/.exec(line.trim());
+    if (!match) continue;
+    if (!newest || compareVersions(match[1], newest) > 0) newest = match[1];
+  }
+  return newest;
+}
+
+/**
+ * Whether the installed copy of this package is behind its newest tag.
+ *
+ * Never throws: this is a courtesy check running beside the real one, and an
+ * unreachable remote must not take the update check down with it.
+ *
+ * @param {string} repoPath host app checkout
+ * @returns {Promise<{installed: string, latest: string|null, outdated: boolean, error?: string}>}
+ */
+async function checkUpdaterVersion(repoPath) {
+  const result = { installed: INSTALLED_VERSION, latest: null, outdated: false };
+  try {
+    const url = updaterRemoteUrl(repoPath);
+    if (!url) {
+      result.error = 'no git remote known for ' + PACKAGE_NAME;
+      return result;
+    }
+    const latest = await newestPublishedVersion(url);
+    if (!latest) {
+      result.error = 'no version tags on ' + url;
+      return result;
+    }
+    result.latest = latest;
+    result.outdated = compareVersions(latest, INSTALLED_VERSION) > 0;
+  } catch (error) {
+    result.error = String((error && error.stderr) || (error && error.message) || error).trim();
+  }
+  return result;
+}
+
 /**
  * Report whether the running build is behind the source.
  *
@@ -245,6 +356,12 @@ async function checkForUpdates(repoPath, buildCommit) {
   }
 
   if (behind > 0) Object.assign(status, await inspectIncomingRisk(repoPath));
+
+  // Only when the fetch worked: a failed fetch means the network or the
+  // credentials are the problem, and a second remote call would just fail
+  // again and slow the check down for nothing.
+  if (!fetchFailed) status.updater = await checkUpdaterVersion(repoPath);
+
   return status;
 }
 
@@ -300,7 +417,7 @@ const scriptPartsFor = (platform) => SCRIPT_PARTS[platform] || SCRIPT_PARTS.linu
 //
 // Values are baked in rather than passed as arguments because `open -a
 // Terminal` cannot forward arguments to the script.
-function buildUpdateScript({ repoPath, parentPid, appName, platform = process.platform }) {
+function buildUpdateScript({ repoPath, parentPid, appName, updater, platform = process.platform }) {
   const parts = scriptPartsFor(platform);
   // Git Bash accepts C:/dir but not every backslash form, and backslashes
   // inside the single quotes below would survive as literals — so hand the
@@ -314,6 +431,10 @@ set -uo pipefail
 
 REPO=${shellQuote(repoForShell)}
 PARENT_PID=${shellQuote(String(parentPid))}
+# Empty unless the updater itself is behind its newest tag.
+UPDATER_NAME=${shellQuote(PACKAGE_NAME)}
+UPDATER_INSTALLED=${shellQuote(updater && updater.outdated ? String(updater.installed) : '')}
+UPDATER_LATEST=${shellQuote(updater && updater.outdated ? String(updater.latest) : '')}
 
 cd "$REPO" || { echo "Cannot enter $REPO"; read -r -p "Press Enter to close… " _; exit 1; }
 
@@ -395,6 +516,20 @@ git merge --ff-only "$UPSTREAM" || die "git merge --ff-only $UPSTREAM"
 step "Checking what the new commits want to install"
 if git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json 2>/dev/null; then
   echo "No dependency or script changes."
+  # A git dependency can still be stale here: its range has not changed, so
+  # this step is right to say nothing changed, and the installed copy is
+  # behind all the same.
+  if [ -n "$UPDATER_LATEST" ]; then
+    echo
+    echo "⚠️  $UPDATER_NAME $UPDATER_INSTALLED is installed, but $UPDATER_LATEST is released."
+    echo "    'npm install' will NOT move it: package-lock.json pins the resolved"
+    echo "    commit and install honours the lock, so it reports success and"
+    echo "    changes nothing. Afterwards, check what landed:"
+    echo
+    echo "        cd '$REPO' && npm update $UPDATER_NAME && npm run package"
+    echo "        node -p \"require('./node_modules/$UPDATER_NAME/package.json').version\""
+    echo
+  fi
 else
   git --no-pager diff "$BEFORE" HEAD -- package.json
   echo
@@ -493,11 +628,11 @@ function resolveBashPath() {
  * resolving when spawn returns reported success, the app quit 600 ms later,
  * and nothing updated. The caller could not tell that from a normal update.
  */
-function spawnUpdate(repoPath, appName) {
+function spawnUpdate(repoPath, appName, updater) {
   const scriptPath = path.join(os.tmpdir(), `electron-git-updater-${process.pid}.sh`);
   fs.writeFileSync(
     scriptPath,
-    buildUpdateScript({ repoPath, parentPid: process.pid, appName }),
+    buildUpdateScript({ repoPath, parentPid: process.pid, appName, updater }),
     { mode: 0o755 }
   );
 
@@ -612,7 +747,9 @@ function initGitUpdater(options = {}) {
 
       // Awaited so a failed launch is reported instead of the app quitting into
       // silence. Quitting without a visible window was the original bug.
-      await spawnUpdate(repo, appName);
+      // Checked here rather than reused from the last status: the update is
+      // about to run, so this is the moment the answer has to be current.
+      await spawnUpdate(repo, appName, await checkUpdaterVersion(repo));
 
       // Let the reply reach the renderer, then quit so the script can
       // repackage over out/.
@@ -642,6 +779,7 @@ module.exports = {
   initGitUpdater,
   resolveBashPath,
   checkForUpdates,
+  checkUpdaterVersion,
   inspectIncomingRisk,
   resolveRepoPath,
   buildUpdateScript,
