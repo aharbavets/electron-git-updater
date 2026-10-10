@@ -610,7 +610,21 @@ if git diff --quiet "$BEFORE" -- package.json package-lock.json 2>/dev/null; the
     echo
   fi
 else
-  git --no-pager diff "$BEFORE" -- package.json
+  # Both files, because either can fire this step. A lockfile-only change used
+  # to print nothing at all and then ask the person to "read the diff above",
+  # which is the same fault as reviewing the wrong thing: being asked to
+  # confirm something you were never shown.
+  git --no-pager diff --stat "$BEFORE" -- package.json package-lock.json
+  echo
+  if git diff --quiet "$BEFORE" -- package.json 2>/dev/null; then
+    echo "package.json itself is unchanged — only the lockfile moved, so the"
+    echo "resolved versions changed without the declared ranges changing."
+    echo "Inspect it with:"
+    echo
+    echo "        cd '$REPO' && git diff $BEFORE -- package-lock.json"
+  else
+    git --no-pager diff "$BEFORE" -- package.json
+  fi
   echo
   echo "⚠️  These commits change dependencies or install scripts."
   echo "    npm install runs preinstall/postinstall from every package in the"
