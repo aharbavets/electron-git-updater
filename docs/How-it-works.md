@@ -180,7 +180,15 @@ The dirty-tree check is first among the real steps because it is the most common
 So a commit that adds a dependency is a commit that runs code here — and anyone who can push to the remote can write that commit.
 An updater that pulls and installs unattended is a remote code execution channel with a nice button on it.
 
-`inspectIncomingRisk()` compares `package.json` at `HEAD` against the one at `@{upstream}` and flags three things:
+The check exists in two places, and they compare different things on purpose.
+
+`inspectIncomingRisk()` — the one behind `status.risky`, used to flag the update in the app's UI — compares `package.json` at `HEAD` against the one at `@{upstream}`. It answers "what is coming in", which is the right question for a badge, and deliberately ignores the working tree so that your own half-finished edits do not light it up.
+
+🚨 **The gate inside the update script compares against the working tree instead**, because that is what `npm install` reads. The two were once the same comparison, and the difference was reachable: an upstream commit touching only `package-lock.json` fires the gate, the `package.json` diff prints **empty** because nothing changed in the commits, and an uncommitted `postinstall` sitting in the working tree is then run by the install — never having been shown to the person who typed the phrase. Reviewing `HEAD` while installing the working tree is reviewing the wrong thing.
+
+A consequence worth knowing: a purely local, uncommitted dependency change now trips the gate even when nothing is coming in. That is the intended trade — it is still a change that `npm install` would act on.
+
+Either way, the flags raised are the same three:
 
 - an npm lifecycle hook **added or changed** — `preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, `prepack`, and the rest of the list;
 - a **brand-new** dependency in any of the four dependency fields;

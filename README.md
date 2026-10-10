@@ -99,7 +99,7 @@ Windows gets the same treatment through `cmd /c start`, which gives the script i
 
 `npm install` executes `preinstall` / `postinstall` scripts from every package, so a commit that adds a dependency is a commit that runs code on your machine. Anyone who can push to the remote can do that.
 
-The updater therefore inspects incoming commits for:
+The updater therefore inspects what the update would install — incoming commits **and** any uncommitted changes to `package.json`, since `npm install` reads the working tree — for:
 
 - added or changed npm lifecycle hooks,
 - brand-new dependencies,

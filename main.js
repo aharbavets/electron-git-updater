@@ -585,7 +585,15 @@ git merge --ff-only "$UPSTREAM" || die "git merge --ff-only $UPSTREAM"
 # reports what changed and stops; installing is a decision for a human who has
 # read the diff.
 step "Checking what the new commits want to install"
-if git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json 2>/dev/null; then
+# Compared against the WORKING TREE, not against HEAD.
+#
+# npm install reads the working tree, so that is what has to be reviewed. With
+# HEAD in the comparison the two disagreed, and the gap was reachable: an
+# upstream commit touching only package-lock.json fires this step, the diff of
+# package.json prints empty because nothing changed in the commits, and an
+# uncommitted postinstall sitting in the working tree is then executed by the
+# install — never having been shown to the person who confirmed it.
+if git diff --quiet "$BEFORE" -- package.json package-lock.json 2>/dev/null; then
   echo "No dependency or script changes."
   # A git dependency can still be stale here: its range has not changed, so
   # this step is right to say nothing changed, and the installed copy is
@@ -602,7 +610,7 @@ if git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json 2>/dev/null
     echo
   fi
 else
-  git --no-pager diff "$BEFORE" HEAD -- package.json
+  git --no-pager diff "$BEFORE" -- package.json
   echo
   echo "⚠️  These commits change dependencies or install scripts."
   echo "    npm install runs preinstall/postinstall from every package in the"
