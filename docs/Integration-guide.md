@@ -376,7 +376,7 @@ You should get the dirty-tree warning and a prompt, not a cryptic failure.
 | `window.gitUpdater` is `undefined`                              | preload not loaded, or `contextIsolation: false`               | check `webPreferences.preload`; leave `contextIsolation` at its default                    |
 | Always "up to date" though the source moved                     | `knowsBuildCommit: false` — the commit was never baked in      | revisit Step 1; confirm the plugin is in the **main** config                               |
 | Nothing happens on Update, no Terminal                          | `open -a Terminal` failed                                      | read `onError`; `apply()` returns `{ started: false, error }` rather than failing silently |
-| Update returns `blocked: true`                                  | incoming commits change dependencies or install hooks          | by design — read the diff, then `git pull && npm install && npm run package` by hand       |
+| Update returns `blocked: true`                                  | incoming commits change dependencies or install hooks          | by design — read the diff, then run `node node_modules/electron-git-updater/cli.js update` and confirm, or set `allowRiskyUpdates: true` so the app's own button offers the same prompt       |
 | Red "not on a recently updated branch" that never clears        | another remote branch has newer commits than the one you track | switch branch, or ignore it — it is information, not an error                              |
 | `status.error` mentioning `no upstream`                         | the current branch tracks nothing                              | `git branch -u origin/<branch>`                                                            |
 | The check fails instead of hanging on a credential prompt       | intentional — `GIT_TERMINAL_PROMPT=0` is set                   | give the remote an SSH key or a credential helper                                          |
@@ -386,7 +386,8 @@ You should get the dirty-tree warning and a prompt, not a cryptic failure.
 
 ## 5. Limits worth knowing up front
 
-**The generated script is not configurable.**
+**The generated script's steps are not configurable.**
+`allowRiskyUpdates` and `riskPhrase` change what it does at the supply-chain gate, and nothing else does.
 It hard-codes `npm run package`, and looks for the newest `out/*/*.app` on macOS, `out/*/*.exe` on Windows, or the newest executable under `out/*/` on Linux.
 A different build command or output layout means the build step fails or the reopen finds nothing — the pull still happens, and the Terminal window stays open saying so.
 `buildUpdateScript()` is exported if you want to read exactly what runs; it is not currently swappable at init time.

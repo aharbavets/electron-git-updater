@@ -74,6 +74,17 @@ export interface InitOptions {
     intervalMs?: number
     /** Run a check shortly after launch. Default true. */
     checkOnStart?: boolean
+    /**
+     * Let an update that changes dependencies or install scripts go ahead
+     * after the person running it types the confirmation phrase. Default
+     * false, which refuses outright.
+     *
+     * This does not remove the supply-chain gate — it moves the decision into
+     * the update script, where the diff is on screen while it is made.
+     */
+    allowRiskyUpdates?: boolean
+    /** Phrase to type to confirm such an update. Default `REVIEWED`. */
+    riskPhrase?: string
     onError?: (message: string, error: unknown) => void
 }
 
@@ -106,6 +117,10 @@ export declare function buildUpdateScript(options: {
      * generated script says so and gives the command that actually moves it.
      */
     updater?: UpdaterVersion
+    /** Offer the typed confirmation instead of refusing. Default false. */
+    allowRisky?: boolean
+    /** Phrase the script asks for. Default `REVIEWED`. */
+    riskPhrase?: string
     /** Platform to generate for. Defaults to the running one. */
     platform?: NodeJS.Platform
 }): string
@@ -116,6 +131,9 @@ export declare function buildUpdateScript(options: {
  * so a native Windows process cannot use it.
  */
 export declare function resolveBashPath(): string | null
+
+/** The phrase the update script asks for before installing risky changes. */
+export declare const RISK_CONFIRMATION: string
 
 export declare const IPC_CHECK: string
 export declare const IPC_APPLY: string

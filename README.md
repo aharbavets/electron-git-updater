@@ -105,13 +105,17 @@ The updater therefore inspects incoming commits for:
 - brand-new dependencies,
 - dependencies switched to a non-registry source (git, url, tarball, local path).
 
-**When any of those are found, the update does not run.** It is reported in `status.risky` / `status.reasons` so your UI can flag it, and `apply()` returns `{ started: false, blocked: true, reasons }` without touching anything. Finish by hand once you have read the diff:
+**When any of those are found, the update does not run unattended.** It is reported in `status.risky` / `status.reasons` so your UI can flag it, and by default `apply()` returns `{ started: false, blocked: true, reasons }` without touching anything.
 
-```bash
-git pull && npm install && npm run package
+**What is configurable is who decides, not whether anyone does.** With `allowRiskyUpdates: true` the refusal moves out of the app and into the update script: it prints the `package.json` diff, explains that `npm install` runs code rather than downloading it, and asks for a phrase to be typed in full.
+
+```
+Type REVIEWED to install and build anyway, anything else to stop:
 ```
 
-**This is not configurable, deliberately.** Carrying such a commit through unattended is the whole attack, so there is no option to switch the gate off and no default to get wrong. A setting like that only has to be wrong once.
+That is a **stronger** consent than the button in the app, not a weaker one — the diff is on screen while the decision is made, and nothing but an exact match continues. A different word in either case, an empty line, or no terminal to type into all stop the update with nothing installed.
+
+The default stays `false`. Loosening a supply-chain default on a library's say-so is not something to do quietly, and the one time it matters is the time it must not have been wrong already.
 
 ## The updater can go stale without saying so
 
@@ -147,9 +151,25 @@ initGitUpdater({
   repoPath, // default: walk up from the app bundle to the .git root
   intervalMs: 15 * 60_000, // re-check interval; 0 disables
   checkOnStart: true,
+  allowRiskyUpdates: false, // let risky changes be confirmed by typing a phrase
+  riskPhrase: "REVIEWED", // what to type when they are
   onError,
 });
 ```
+
+## Updating from a terminal
+
+The same update, without the app:
+
+```bash
+node node_modules/electron-git-updater/cli.js update
+# or, if the bin is on PATH
+electron-git-updater update [--repo <path>] [--no-risk]
+```
+
+It runs the generated script in the terminal you are already in, so the diff and the confirmation prompt are right there. Risky changes may be confirmed by default here, because by definition somebody is present to read them; `--no-risk` restores the plain refusal.
+
+⭐ **Use this instead of a hand-written `update.sh`.** A script that does `git pull && npm install && npm run package` is precisely what the gate above exists to prevent, and a second, friendlier path around a safety gate is worse than no path at all — it is the one people reach for when the safe path says no.
 
 ## Docs
 

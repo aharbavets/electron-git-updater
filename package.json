@@ -36,7 +36,8 @@
     }
   },
   "files": [
-    "index.js",
+    
+    "cli.js","index.js",
     "main.js",
     "preload.js",
     "renderer.js",

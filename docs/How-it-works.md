@@ -193,13 +193,24 @@ The generated script carries a second copy of the check for the same reason, in 
 Called directly, it compares against whatever the remote-tracking ref already holds — **it does not fetch**.
 `checkForUpdates()` fetches before calling it, so the normal path is current; a bare call on a stale ref sees nothing incoming and reports `risky: false`.
 
-**There is no option to disable this**, and that is deliberate.
-An earlier version had one, defaulting to "ask instead of block".
-That default is wrong exactly once, and once is the whole point: a gate that protects you only when you remembered to switch it on is not a gate.
-Finishing by hand is two commands, after reading a diff you should read anyway:
+**The gate cannot be switched off**, and the default cannot be loosened.
+An early version did have an option that defaulted to "ask instead of block", and that was wrong: a default is wrong exactly once, and a gate that protects you only when you remembered to turn it on is not a gate.
+
+What exists now is narrower, and the difference is the part that matters.
+`allowRiskyUpdates` does not disable the check and does not make the update unattended — it moves the refusal from the app into the update script, where the `package.json` diff is already printed and a person has to type a phrase in full before anything is installed:
+
+```
+Type REVIEWED to install and build anyway, anything else to stop:
+```
+
+So the thing that was rejected was *asking in a dialog instead of blocking*, which turns a safety gate into a click.
+Asking in a terminal, under the diff, with no default answer and no keystroke that means yes, is the informed consent the gate was protecting in the first place.
+It still defaults to off, because loosening a supply-chain default on a library's say-so is its own mistake.
+
+Either way, finishing by hand is one command, after reading a diff you should read anyway:
 
 ```bash
-git pull && npm install && npm run package
+node node_modules/electron-git-updater/cli.js update
 ```
 
 The gate is a heuristic and it knows it.
