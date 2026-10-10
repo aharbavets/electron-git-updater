@@ -8,6 +8,9 @@
   "description": "Drop-in git-pull auto-updater for source-run Electron apps: detects when the running build is behind the source, then rebuilds and relaunches it in a visible Terminal. No UI — your app draws its own.",
   "license": "MIT",
   "author": "Alexander Harbavets",
+  "bin": {
+    "electron-git-updater": "./cli.js"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {

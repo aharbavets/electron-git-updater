@@ -9,7 +9,22 @@
 // No UI lives here on purpose — every app draws its own button or badge from
 // the status object. See README.md.
 
-const { app, ipcMain } = require('electron');
+// Electron is a peer, not a dependency, and this file is also loaded from the
+// command line where there is no Electron at all.
+//
+// ⚠️ Outside Electron, `require('electron')` does not fail — the npm package
+// exports the *path to the binary*, a string. So the guard has to survive both
+// "not installed" and "installed but not running inside it", which is why the
+// pieces are read off the module rather than destructured.
+const electron = (() => {
+  try {
+    return require('electron');
+  } catch (_) {
+    return null;
+  }
+})();
+const app = electron && electron.app;
+const ipcMain = electron && electron.ipcMain;
 const { execFile, execFileSync, spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
@@ -18,6 +33,13 @@ const path = require('path');
 const IPC_CHECK = 'git-updater:check';
 const IPC_APPLY = 'git-updater:apply';
 const EVT_STATUS = 'git-updater:status';
+
+// Typed by hand to let an update that changes dependencies go ahead.
+//
+// One word, and a claim about the person rather than a permission: typing it
+// asserts the diff above was read. "YES" or "y" is a reflex at a prompt; this
+// is not, and it is still short enough not to invite a copy-paste.
+const RISK_CONFIRMATION = 'REVIEWED';
 
 // Run a git command in `cwd`, resolving with trimmed stdout.
 //
@@ -448,7 +470,15 @@ const scriptPartsFor = (platform) => SCRIPT_PARTS[platform] || SCRIPT_PARTS.linu
 //
 // Values are baked in rather than passed as arguments because `open -a
 // Terminal` cannot forward arguments to the script.
-function buildUpdateScript({ repoPath, parentPid, appName, updater, platform = process.platform }) {
+function buildUpdateScript({
+  repoPath,
+  parentPid,
+  appName,
+  updater,
+  allowRisky = false,
+  riskPhrase = RISK_CONFIRMATION,
+  platform = process.platform,
+}) {
   const parts = scriptPartsFor(platform);
   // Git Bash accepts C:/dir but not every backslash form, and backslashes
   // inside the single quotes below would survive as literals — so hand the
@@ -464,6 +494,9 @@ REPO=${shellQuote(repoForShell)}
 PARENT_PID=${shellQuote(String(parentPid))}
 # Empty unless the updater itself is behind its newest tag.
 UPDATER_NAME=${shellQuote(PACKAGE_NAME)}
+# Empty unless the host allows a risky update to be confirmed by hand.
+ALLOW_RISKY=${shellQuote(allowRisky ? '1' : '')}
+RISK_PHRASE=${shellQuote(riskPhrase)}
 UPDATER_INSTALLED=${shellQuote(updater && updater.outdated ? String(updater.installed) : '')}
 UPDATER_LATEST=${shellQuote(updater && updater.outdated ? String(updater.latest) : '')}
 # Pre-quoted in JavaScript rather than assembled in the script: the command
@@ -571,12 +604,28 @@ if git diff --quiet "$BEFORE" HEAD -- package.json package-lock.json 2>/dev/null
 else
   git --no-pager diff "$BEFORE" HEAD -- package.json
   echo
-  echo "⚠️  The source is now at the new commits, but nothing was installed and"
-  echo "    nothing was built. Review the diff above, then finish by hand:"
+  echo "⚠️  These commits change dependencies or install scripts."
+  echo "    npm install runs preinstall/postinstall from every package in the"
+  echo "    tree, with your permissions — so this is running code, not"
+  echo "    downloading it. Read the diff above before deciding."
   echo
-  echo "        cd '$REPO' && npm install && npm run package"
-  echo
-  die "incoming commits change dependencies or install scripts"
+  # Only when the host opted in, and only with a terminal to type into: a
+  # prompt nobody can answer would hang the update instead of failing it.
+  if [ -n "$ALLOW_RISKY" ] && [ -t 0 ]; then
+    printf 'Type %s to install and build anyway, anything else to stop: ' "$RISK_PHRASE"
+    read -r REPLY_RISK
+    if [ "$REPLY_RISK" != "$RISK_PHRASE" ]; then
+      die "not confirmed — nothing was installed"
+    fi
+    step "Installing dependencies"
+    npm install || die "npm install"
+  else
+    echo "    Nothing was installed and nothing was built. Finish by hand:"
+    echo
+    echo "        cd '$REPO' && npm install && npm run package"
+    echo
+    die "incoming commits change dependencies or install scripts"
+  fi
 fi
 
 step "Building the app"
@@ -666,11 +715,18 @@ function resolveBashPath() {
  * resolving when spawn returns reported success, the app quit 600 ms later,
  * and nothing updated. The caller could not tell that from a normal update.
  */
-function spawnUpdate(repoPath, appName, updater) {
+function spawnUpdate(repoPath, appName, updater, risk = {}) {
   const scriptPath = path.join(os.tmpdir(), `electron-git-updater-${process.pid}.sh`);
   fs.writeFileSync(
     scriptPath,
-    buildUpdateScript({ repoPath, parentPid: process.pid, appName, updater }),
+    buildUpdateScript({
+      repoPath,
+      parentPid: process.pid,
+      appName,
+      updater,
+      allowRisky: risk.allowRisky,
+      riskPhrase: risk.riskPhrase,
+    }),
     { mode: 0o755 }
   );
 
@@ -741,6 +797,12 @@ function initGitUpdater(options = {}) {
     repoPath = null,
     intervalMs = 15 * 60 * 1000,
     checkOnStart = true,
+    // Off by default: this is the supply-chain gate, and a security default is
+    // not something to loosen on a library's say-so. Turning it on does not
+    // remove the gate — it moves the decision to a person standing in front of
+    // the diff in a terminal, who has to type the phrase to continue.
+    allowRiskyUpdates = false,
+    riskPhrase = RISK_CONFIRMATION,
     onError = (message, error) => console.error('[git-updater]', message, error),
   } = options;
 
@@ -772,13 +834,17 @@ function initGitUpdater(options = {}) {
   ipcMain.handle(IPC_CHECK, () => runCheck());
   ipcMain.handle(IPC_APPLY, async () => {
     try {
-      // Always. A commit that adds a dependency or an install hook runs code
-      // on this machine the moment npm install does — so the updater refuses
-      // to carry it out and reports what it saw instead. This is not
-      // configurable on purpose: the one time it matters, a default is not
-      // something to have got wrong.
+      // A commit that adds a dependency or an install hook runs code on this
+      // machine the moment npm install does, so an unattended update must not
+      // carry it out.
+      //
+      // Who gets to decide is the only configurable part. By default the
+      // updater refuses here and reports what it saw. With allowRiskyUpdates
+      // the refusal moves into the script, where a person can read the diff
+      // and type the phrase — which is a stronger consent than a button in the
+      // app, not a weaker one, because the diff is on screen while they decide.
       const { risky, reasons } = await inspectIncomingRisk(repo);
-      if (risky) {
+      if (risky && !allowRiskyUpdates) {
         onError('update blocked: risky package.json changes', new Error(reasons.join('; ')));
         return { started: false, blocked: true, reasons };
       }
@@ -787,7 +853,10 @@ function initGitUpdater(options = {}) {
       // silence. Quitting without a visible window was the original bug.
       // Checked here rather than reused from the last status: the update is
       // about to run, so this is the moment the answer has to be current.
-      await spawnUpdate(repo, appName, await checkUpdaterVersion(repo));
+      await spawnUpdate(repo, appName, await checkUpdaterVersion(repo), {
+        allowRisky: allowRiskyUpdates,
+        riskPhrase,
+      });
 
       // Let the reply reach the renderer, then quit so the script can
       // repackage over out/.
@@ -821,6 +890,7 @@ module.exports = {
   inspectIncomingRisk,
   resolveRepoPath,
   buildUpdateScript,
+  RISK_CONFIRMATION,
   IPC_CHECK,
   IPC_APPLY,
   EVT_STATUS,
