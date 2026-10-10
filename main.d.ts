@@ -121,6 +121,8 @@ export declare function buildUpdateScript(options: {
     allowRisky?: boolean
     /** Phrase the script asks for. Default `REVIEWED`. */
     riskPhrase?: string
+    /** Package manager to generate for. Detected from the checkout by default. */
+    packageManager?: PackageManager
     /** Platform to generate for. Defaults to the running one. */
     platform?: NodeJS.Platform
 }): string
@@ -131,6 +133,32 @@ export declare function buildUpdateScript(options: {
  * so a native Windows process cannot use it.
  */
 export declare function resolveBashPath(): string | null
+
+/** How a package manager is installed from, and how exposed its install is. */
+export interface PackageManager {
+    /** `npm`, `pnpm`, `yarn` or `bun`. */
+    name: string
+    /** The lockfile that identifies it, e.g. `pnpm-lock.yaml`. */
+    lockfile: string
+    /** Install command, e.g. `pnpm install`. */
+    install: string
+    /** Script-running prefix, e.g. `pnpm run`. */
+    run: string
+    /** Command that re-resolves a dependency's range, e.g. `pnpm update`. */
+    update: string
+    /**
+     * Whether it runs a dependency's install scripts without approval. False
+     * for pnpm 10+ and bun; true for npm 11 and earlier and yarn classic. It
+     * decides how the gate words its warning, not whether the gate runs.
+     */
+    runsDependencyScripts: boolean
+}
+
+/**
+ * The package manager a checkout uses: `packageManager` in package.json first,
+ * then whichever lockfile is present, then npm.
+ */
+export declare function detectPackageManager(repoPath: string): PackageManager
 
 /** The phrase the update script asks for before installing risky changes. */
 export declare const RISK_CONFIRMATION: string

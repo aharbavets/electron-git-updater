@@ -1,6 +1,6 @@
 # electron-git-updater
 
-Auto-update for Electron apps that are **run from their own source checkout** — the pattern where the app lives in a git repo, is packaged with `npm run package`, and is launched from `out/`. It notices when the running build is behind the source, and on request pulls, reinstalls, rebuilds and relaunches in a **visible Terminal window**.
+Auto-update for Electron apps that are **run from their own source checkout** — the pattern where the app lives in a git repo, is packaged with its `package` script, and is launched from `out/`. It notices when the running build is behind the source, and on request pulls, reinstalls, rebuilds and relaunches in a **visible Terminal window**.
 
 It ships **no UI**. The main process reports a status object; your app draws whatever button, badge or banner suits it, because that part is different in every app.
 
@@ -97,7 +97,20 @@ Windows gets the same treatment through `cmd /c start`, which gives the script i
 
 ## Supply-chain gate
 
-`npm install` executes `preinstall` / `postinstall` scripts from every package, so a commit that adds a dependency is a commit that runs code on your machine. Anyone who can push to the remote can do that.
+Installing a dependency can run code on your machine, so a commit that adds one is a commit that runs code here — and anyone who can push to the remote can write it.
+
+⚠️ **How exposed that is depends on the package manager, and the answer changed recently.** Measured 2026-10-10:
+
+| manager | runs a dependency's install scripts | since |
+| --- | --- | --- |
+| npm 11 and earlier | **yes** | — |
+| npm 12 | no, until approved | 12.0.0 (2026-07-08) |
+| yarn classic | **yes** | — |
+| yarn berry 4.14+ | no, for third-party | 4.14.0 |
+| pnpm 10+ | no, until approved | 10.0.0 |
+| bun | no, beyond its own allowlist | 0.1.7 |
+
+**The gate is worth having under all of them**, because two things hold whatever the manager does: the project's **own** install scripts always run, and a new dependency is new code the app will load and execute at runtime anyway. The script words its warning to match the manager it detected rather than claiming the worst case everywhere.
 
 The updater therefore inspects what the update would install — incoming commits **and** any uncommitted changes to `package.json`, since `npm install` reads the working tree — for:
 
@@ -157,6 +170,14 @@ initGitUpdater({
 });
 ```
 
+## Package managers
+
+npm, pnpm, yarn and bun. The one in use is detected from `packageManager` in `package.json` first — the corepack field, which says what the project *means* — then from whichever lockfile is present, then npm as the fallback.
+
+Everything the script does follows from that: the install and build commands, the lockfile it watches for changes, and how it words the warning above. Nothing needs configuring; `buildUpdateScript({ packageManager })` overrides the detection if you need it to.
+
+**Deno is not supported, and not for want of trying.** Electron's main process is Node — an Electron app run from source under Deno is not a thing that exists, so there is nothing here to support.
+
 ## Updating from a terminal
 
 The same update, without the app:
@@ -179,7 +200,7 @@ It runs the generated script in the terminal you are already in, so the diff and
 ## Requirements
 
 `git` on `PATH`, and on Windows the bash that comes with Git for Windows.
-The app must be run from its git checkout with `npm run package` producing a build under `out/` — `out/*/*.app` on macOS, `out/*/*.exe` on Windows, the newest executable under `out/*/` on Linux.
+The app must be run from its git checkout, with its `package` script producing a build under `out/` — `out/*/*.app` on macOS, `out/*/*.exe` on Windows, the newest executable under `out/*/` on Linux.
 
 This is deliberately **not** an updater for distributed, signed, notarized apps.
 Use Squirrel or `electron-updater` for those.

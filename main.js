@@ -200,6 +200,95 @@ async function remoteUrlFor(repoPath, upstream) {
   }
 }
 
+// --- Which package manager does this checkout use? ---------------------------
+//
+// The script has to install and build with the manager the project actually
+// uses, and the managers differ in more than their command names.
+//
+// 🚨 `runsDependencyScripts` is the one that matters, and it is why this is a
+// table rather than a string. Measured 2026-10-10: npm 10 and yarn classic run
+// a dependency's postinstall on install; pnpm 10+ and bun block it unless the
+// package is approved. npm itself blocks it from 12.0.0 (2026-07-08). So the
+// sentence "installing runs code from every package" is true for some of these
+// and false for others, and the gate must not claim it where it is false.
+//
+// What stays true everywhere: the project's *own* install scripts always run,
+// and a new dependency is new code the app will load — which is what keeps the
+// gate worth having under every manager.
+const PACKAGE_MANAGERS = {
+  npm: {
+    lockfile: 'package-lock.json',
+    install: 'npm install',
+    run: 'npm run',
+    update: 'npm update',
+    // npm 12 blocks them; earlier versions do not, and the script cannot know
+    // which is in front of it without running npm. Assuming the riskier of the
+    // two is the safe way to be wrong.
+    runsDependencyScripts: true,
+  },
+  pnpm: {
+    lockfile: 'pnpm-lock.yaml',
+    install: 'pnpm install',
+    run: 'pnpm run',
+    update: 'pnpm update',
+    runsDependencyScripts: false,
+  },
+  yarn: {
+    lockfile: 'yarn.lock',
+    install: 'yarn install',
+    // Yarn has no `run` requirement for user scripts, and `yarn run x` works in
+    // both the classic and berry lines, so it is spelled out for clarity.
+    run: 'yarn run',
+    update: 'yarn upgrade',
+    // True for the classic line, which is what a bare `yarn.lock` usually
+    // means. Berry 4.14+ blocks third-party scripts; erring towards "runs" is
+    // the safe direction.
+    runsDependencyScripts: true,
+  },
+  bun: {
+    lockfile: 'bun.lock',
+    install: 'bun install',
+    run: 'bun run',
+    update: 'bun update',
+    runsDependencyScripts: false,
+  },
+};
+
+/**
+ * The package manager a checkout uses.
+ *
+ * `packageManager` in package.json is the corepack standard and says what the
+ * project means, so it wins. A lockfile says what was last done, which is the
+ * next best evidence. npm is the fallback because it is what an Electron Forge
+ * project gets by default.
+ *
+ * ⚠️ bun is checked for two lockfiles: `bun.lockb` was binary, so a diff of it
+ * is meaningless, and newer bun writes the text `bun.lock` instead.
+ */
+function detectPackageManager(repoPath) {
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(repoPath, 'package.json'), 'utf8')
+    );
+    const declared = String(manifest.packageManager || '').split('@')[0];
+    if (PACKAGE_MANAGERS[declared]) {
+      return { name: declared, ...PACKAGE_MANAGERS[declared] };
+    }
+  } catch (_) {
+    /* no manifest, or not JSON */
+  }
+
+  for (const [name, pm] of Object.entries(PACKAGE_MANAGERS)) {
+    if (fs.existsSync(path.join(repoPath, pm.lockfile))) {
+      return { name, ...pm };
+    }
+  }
+  if (fs.existsSync(path.join(repoPath, 'bun.lockb'))) {
+    return { name: 'bun', ...PACKAGE_MANAGERS.bun, lockfile: 'bun.lockb' };
+  }
+  return { name: 'npm', ...PACKAGE_MANAGERS.npm };
+}
+
 // --- Is the updater itself out of date? --------------------------------------
 //
 // This library is almost always the host app's only git dependency, and a git
@@ -477,8 +566,10 @@ function buildUpdateScript({
   updater,
   allowRisky = false,
   riskPhrase = RISK_CONFIRMATION,
+  packageManager = null,
   platform = process.platform,
 }) {
+  const pm = packageManager || detectPackageManager(repoPath);
   const parts = scriptPartsFor(platform);
   // Git Bash accepts C:/dir but not every backslash form, and backslashes
   // inside the single quotes below would survive as literals — so hand the
@@ -495,6 +586,12 @@ PARENT_PID=${shellQuote(String(parentPid))}
 # Empty unless the updater itself is behind its newest tag.
 UPDATER_NAME=${shellQuote(PACKAGE_NAME)}
 # Empty unless the host allows a risky update to be confirmed by hand.
+# The project's package manager, detected from packageManager/lockfile.
+PM_NAME=${shellQuote(pm.name)}
+PM_INSTALL=${shellQuote(pm.install)}
+PM_RUN=${shellQuote(pm.run)}
+PM_UPDATE=${shellQuote(pm.update)}
+PM_LOCK=${shellQuote(pm.lockfile)}
 ALLOW_RISKY=${shellQuote(allowRisky ? '1' : '')}
 RISK_PHRASE=${shellQuote(riskPhrase)}
 UPDATER_INSTALLED=${shellQuote(updater && updater.outdated ? String(updater.installed) : '')}
@@ -578,22 +675,24 @@ fi
 git fetch || die "git fetch"
 git merge --ff-only "$UPSTREAM" || die "git merge --ff-only $UPSTREAM"
 
-# Never install dependencies that arrived with this pull. npm install runs
-# preinstall/postinstall scripts from every package, on this machine, with
-# these permissions — so a commit that adds a dependency is a commit that runs
-# code here, and anyone able to push to the remote can write it. The updater
-# reports what changed and stops; installing is a decision for a human who has
-# read the diff.
+# Never install dependencies that arrived with this pull without being asked.
+#
+# How exposed that is depends on the manager — npm 11 and earlier and yarn
+# classic run a dependency's install scripts, while pnpm 10+, bun and npm 12
+# block them until the package is approved. What holds everywhere is that the
+# project's own install scripts run, and that a new dependency is new code the
+# app will load. So the updater reports what changed and stops; installing is a
+# decision for a person who has read the diff.
 step "Checking what the new commits want to install"
 # Compared against the WORKING TREE, not against HEAD.
 #
-# npm install reads the working tree, so that is what has to be reviewed. With
+# The install reads the working tree, so that is what has to be reviewed. With
 # HEAD in the comparison the two disagreed, and the gap was reachable: an
 # upstream commit touching only package-lock.json fires this step, the diff of
 # package.json prints empty because nothing changed in the commits, and an
 # uncommitted postinstall sitting in the working tree is then executed by the
 # install — never having been shown to the person who confirmed it.
-if git diff --quiet "$BEFORE" -- package.json package-lock.json 2>/dev/null; then
+if git diff --quiet "$BEFORE" -- package.json "$PM_LOCK" 2>/dev/null; then
   echo "No dependency or script changes."
   # A git dependency can still be stale here: its range has not changed, so
   # this step is right to say nothing changed, and the installed copy is
@@ -601,11 +700,11 @@ if git diff --quiet "$BEFORE" -- package.json package-lock.json 2>/dev/null; the
   if [ -n "$UPDATER_LATEST" ]; then
     echo
     echo "⚠️  $UPDATER_NAME $UPDATER_INSTALLED is installed, but $UPDATER_LATEST is released."
-    echo "    'npm install' will NOT move it: package-lock.json pins the resolved"
-    echo "    commit and install honours the lock, so it reports success and"
-    echo "    changes nothing. Afterwards, check what landed:"
+    echo "    A plain install will NOT move it: $PM_LOCK pins the resolved"
+    echo "    commit and the install honours the lock, so it reports success"
+    echo "    and changes nothing. Afterwards, check what landed:"
     echo
-    echo "        cd '$REPO' && npm update $UPDATER_NAME && npm run package"
+    echo "        cd '$REPO' && $PM_UPDATE $UPDATER_NAME && $PM_RUN package"
     echo "        $UPDATER_VERIFY"
     echo
   fi
@@ -614,22 +713,27 @@ else
   # to print nothing at all and then ask the person to "read the diff above",
   # which is the same fault as reviewing the wrong thing: being asked to
   # confirm something you were never shown.
-  git --no-pager diff --stat "$BEFORE" -- package.json package-lock.json
+  git --no-pager diff --stat "$BEFORE" -- package.json "$PM_LOCK"
   echo
   if git diff --quiet "$BEFORE" -- package.json 2>/dev/null; then
     echo "package.json itself is unchanged — only the lockfile moved, so the"
     echo "resolved versions changed without the declared ranges changing."
     echo "Inspect it with:"
     echo
-    echo "        cd '$REPO' && git diff $BEFORE -- package-lock.json"
+    echo "        cd '$REPO' && git diff $BEFORE -- $PM_LOCK"
   else
     git --no-pager diff "$BEFORE" -- package.json
   fi
   echo
-  echo "⚠️  These commits change dependencies or install scripts."
-  echo "    npm install runs preinstall/postinstall from every package in the"
-  echo "    tree, with your permissions — so this is running code, not"
-  echo "    downloading it. Read the diff above before deciding."
+  echo "⚠️  These changes alter dependencies or install scripts."
+${pm.runsDependencyScripts
+  ? `  echo "    $PM_INSTALL runs preinstall/postinstall from every package in"
+  echo "    the tree, with your permissions — so this is running code, not"
+  echo "    downloading it. Read the diff above before deciding."`
+  : `  echo "    $PM_NAME does not run a dependency's install scripts unless it"
+  echo "    is approved, so this is less exposed than npm — but this"
+  echo "    project's OWN install scripts still run, and a new dependency is"
+  echo "    still new code the app will load. Read the diff above."`}
   echo
   # Only when the host opted in, and only with a terminal to type into: a
   # prompt nobody can answer would hang the update instead of failing it.
@@ -640,18 +744,18 @@ else
       die "not confirmed — nothing was installed"
     fi
     step "Installing dependencies"
-    npm install || die "npm install"
+    $PM_INSTALL || die "$PM_INSTALL"
   else
     echo "    Nothing was installed and nothing was built. Finish by hand:"
     echo
-    echo "        cd '$REPO' && npm install && npm run package"
+    echo "        cd '$REPO' && $PM_INSTALL && $PM_RUN package"
     echo
     die "incoming commits change dependencies or install scripts"
   fi
 fi
 
 step "Building the app"
-npm run package || die "npm run package"
+$PM_RUN package || die "$PM_RUN package"
 
 BUNDLE=$(app_bundle)
 echo
@@ -909,6 +1013,7 @@ module.exports = {
   resolveBashPath,
   checkForUpdates,
   checkUpdaterVersion,
+  detectPackageManager,
   inspectIncomingRisk,
   resolveRepoPath,
   buildUpdateScript,

@@ -176,9 +176,20 @@ The dirty-tree check is first among the real steps because it is the most common
 
 ## The supply-chain gate
 
-`npm install` executes `preinstall` and `postinstall` scripts from **every** package in the tree, with your permissions, on your machine.
-So a commit that adds a dependency is a commit that runs code here — and anyone who can push to the remote can write that commit.
 An updater that pulls and installs unattended is a remote code execution channel with a nice button on it.
+A commit that adds a dependency is a commit that runs code here, and anyone who can push to the remote can write that commit.
+
+🚨 **How directly it runs depends on the package manager, and that changed under this package's feet.**
+The original reasoning — "`npm install` executes `preinstall` and `postinstall` from **every** package in the tree" — was true when this was written and is no longer true everywhere.
+Measured 2026-10-10 by installing a package whose `postinstall` writes a marker file: npm 10 ran it, yarn classic ran it, pnpm 12 did not, bun did not. npm itself stops from 12.0.0 (2026-07-08).
+
+**The gate survives the change, because the part it rests on was never only about dependency scripts:**
+
+- the project's **own** `preinstall`/`postinstall` run under every manager, and an incoming commit can add one;
+- a new dependency is new code the application will `require` and execute at runtime, which no install-time policy prevents;
+- git-hosted dependencies have been a hole of their own — pnpm ran `prepare`/`prepack` for them even while blocking everything else, fixed in 10.26.0. This package is itself installed as a git dependency.
+
+What did change is the wording: the script now says what is true of the manager it detected instead of asserting the worst case everywhere. Claiming a danger that does not apply teaches people to skip the warning that does.
 
 The check exists in two places, and they compare different things on purpose.
 
@@ -224,6 +235,16 @@ node node_modules/electron-git-updater/cli.js update
 The gate is a heuristic and it knows it.
 It reads `package.json`, not the code, so a malicious change to an existing file sails past — this narrows one specific, well-known vector, it does not make pulling from a remote safe.
 It also has false positives: an ordinary new dependency trips it. That is the intended trade, since the cost is doing the update manually.
+
+## Package managers
+
+npm, pnpm, yarn and bun, detected in this order: `packageManager` in `package.json` (the corepack field, and the only one that states intent), then whichever lockfile exists, then npm.
+
+The manager decides four things in the generated script — the install command, the script-running prefix, the lockfile the gate watches, and the wording of the warning. They are passed in as shell variables rather than spliced through the text, so the script reads the same whichever one is in use.
+
+⚠️ **bun has two lockfiles.** `bun.lockb` was binary, which makes a diff of it meaningless; newer bun writes the text `bun.lock`. Both are detected, and the binary one is watched for change even though its diff cannot be read — knowing it moved is still worth more than nothing.
+
+**Deno is absent deliberately.** Electron's main process is Node; an Electron app run from source under Deno does not exist, so there is nothing to support rather than something left undone.
 
 ## Failure philosophy
 

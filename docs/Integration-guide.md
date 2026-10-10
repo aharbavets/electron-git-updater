@@ -16,7 +16,7 @@ That is a narrow shape, and it is worth checking before you wire anything up.
 It fits when all of these are true:
 
 - The app lives in a git repo on the machine that runs it, with a remote it can `git fetch` from.
-- It is built with `npm run package`, and the result lands in `out/<anything>/<Something>.app`.
+- It is built with `<manager> run package`, and the result lands in `out/<anything>/<Something>.app`. npm, pnpm, yarn and bun are detected automatically.
 - It runs on macOS or Windows, which both show the update in a terminal window, or on Linux, where it runs in the background (see [Platform support](#platform-support)).
 - `git` is on `PATH`, and the remote authenticates without an interactive prompt — an SSH key or a cached credential helper.
 - The people running it can live with an update that takes as long as a full rebuild, in a Terminal window they can see.
@@ -382,13 +382,13 @@ You should get the dirty-tree warning and a prompt, not a cryptic failure.
 | The check fails instead of hanging on a credential prompt       | intentional — `GIT_TERMINAL_PROMPT=0` is set                   | give the remote an SSH key or a credential helper                                          |
 | Banner says "can't reach the repository over SSH" (`fetchAuthFailed`) | the packaged app's environment has no git credentials — on Windows usually no `ssh-agent` for an SSH remote | switch the remote to HTTPS (`git remote set-url origin https://…`); a credential manager then serves it without an agent |
 | Terminal opens, then "cancelled — commit or stash your changes" | dirty working tree, and you declined the prompt                | commit or stash first                                                                      |
-| Terminal says "No built app found under out/"                   | `npm run package` did not produce `out/*/*.app`                | see the layout assumption below                                                            |
+| Terminal says "No built app found under out/"                   | the `package` script did not produce `out/*/*.app`             | see the layout assumption below                                                            |
 
 ## 5. Limits worth knowing up front
 
 **The generated script's steps are not configurable.**
 `allowRiskyUpdates` and `riskPhrase` change what it does at the supply-chain gate, and nothing else does.
-It hard-codes `npm run package`, and looks for the newest `out/*/*.app` on macOS, `out/*/*.exe` on Windows, or the newest executable under `out/*/` on Linux.
+It hard-codes the script name `package` — run with whichever manager was detected — and looks for the newest `out/*/*.app` on macOS, `out/*/*.exe` on Windows, or the newest executable under `out/*/` on Linux.
 A different build command or output layout means the build step fails or the reopen finds nothing — the pull still happens, and the Terminal window stays open saying so.
 `buildUpdateScript()` is exported if you want to read exactly what runs; it is not currently swappable at init time.
 
