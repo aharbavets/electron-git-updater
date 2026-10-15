@@ -73,6 +73,7 @@ useEffect(() => window.gitUpdater?.onStatus(setStatus), [])
 | `branch` / `upstream`                     | current branch (`""` when detached) and what it tracks                                                            |
 | `mostRecentBranch` / `onMostRecentBranch` | the most recently committed remote branch, and whether you're on it — catches "I'm on a stale feature branch"     |
 | `risky` / `reasons`                       | incoming commits change dependencies or install hooks                                                             |
+| `riskConfirmable`                         | whether a risky update can still go ahead from the app, because the update window will ask for the phrase          |
 | `knowsBuildCommit`                        | false when no `buildCommit` was passed, so staleness was measured from `HEAD` and a stale build can't be detected |
 | `error`                                   | the check couldn't run — offline, no upstream, not a checkout                                                     |
 | `updater`                                 | whether this library itself is behind its newest tag — see below. Absent when the fetch failed                   |
@@ -208,3 +209,5 @@ Use Squirrel or `electron-updater` for those.
 ## Optional: the built-in banner
 
 `electron-git-updater/renderer` exports `mountUpdateBanner()`, a framework-agnostic drop-in banner, kept for convenience. Most apps should ignore it and render their own UI from the status object.
+
+⚠️ **Whatever UI you render, key the update button on `riskConfirmable`, not on `risky` alone.** With `allowRiskyUpdates` on, a risky update is still offered — the update window prints the diff and asks for the phrase — so hiding the button there is a dead end that sends the user to a terminal to retype a command the app could have run. With it off, `apply()` comes back `blocked`, and a button that leads only to a refusal is worse than none. The built-in banner does this; a custom UI has to.

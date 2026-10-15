@@ -90,11 +90,23 @@ function mountUpdateBanner(opts = {}) {
       return;
     }
     if (status.risky) {
-      // Risky: no auto-update. Ask to update manually and show what changed.
       alertEl.className =
         'alert alert-warning d-flex flex-column align-items-center mb-0 rounded-0 shadow-sm';
-      textEl.textContent = t('availableManual');
-      btn.style.display = 'none';
+      if (status.riskConfirmable) {
+        // The host allows it, so the update window will print the diff and ask
+        // for the phrase. Hiding the button here would be a dead end: the
+        // refusal has moved to where the person can answer it, and offering no
+        // way to get there just sends them to a terminal to retype a command.
+        textEl.textContent = t('availableRisky');
+        btn.textContent = t('update');
+        btn.disabled = false;
+        btn.style.display = '';
+      } else {
+        // No way through from the app — say so rather than offering a button
+        // that would come back refused.
+        textEl.textContent = t('availableManual');
+        btn.style.display = 'none';
+      }
       setReasons(status.reasons);
     } else {
       alertEl.className =

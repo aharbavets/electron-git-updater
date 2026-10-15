@@ -942,6 +942,13 @@ function initGitUpdater(options = {}) {
   async function runCheck() {
     try {
       const status = await checkForUpdates(repo, buildCommit);
+      // Whether a risky update can be carried through from the app at all.
+      //
+      // The check itself cannot know this — it is a policy of the host, set at
+      // init. Without it in the status the UI has to guess, and both apps
+      // guessed wrong in the same way: they hid or refused the button while
+      // the script was perfectly willing to ask and proceed.
+      status.riskConfirmable = allowRiskyUpdates;
       send(status);
       return status;
     } catch (error) {

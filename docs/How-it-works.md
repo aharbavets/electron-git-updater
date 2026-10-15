@@ -236,6 +236,12 @@ The gate is a heuristic and it knows it.
 It reads `package.json`, not the code, so a malicious change to an existing file sails past — this narrows one specific, well-known vector, it does not make pulling from a remote safe.
 It also has false positives: an ordinary new dependency trips it. That is the intended trade, since the cost is doing the update manually.
 
+### What the UI is told, and why it is not just `risky`
+
+`risky` says what the incoming commits do. It does not say what the app is allowed to do about it, and those are different questions — the answer to the second is `allowRiskyUpdates`, a decision the host makes at init that the check has no way to see.
+
+So `initGitUpdater` adds `riskConfirmable` to the status on its way out. Without it a UI has to guess, and guessing produced the same fault in two separate apps: the button was hidden or refused while the update script was perfectly willing to print the diff and ask.
+
 ## Package managers
 
 npm, pnpm, yarn and bun, detected in this order: `packageManager` in `package.json` (the corepack field, and the only one that states intent), then whichever lockfile exists, then npm.

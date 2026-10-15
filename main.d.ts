@@ -25,6 +25,12 @@ export interface UpdateStatus {
     risky?: boolean
     /** Human-readable list of what makes it risky. */
     reasons?: string[]
+    /**
+     * Whether a risky update can still be carried out from the app, because
+     * `allowRiskyUpdates` is on and the update window will ask for the
+     * confirmation phrase. When false, `apply()` would come back `blocked`.
+     */
+    riskConfirmable?: boolean
     /** Set when the check could not run (offline, no upstream, not a checkout). */
     error?: string
     /**
